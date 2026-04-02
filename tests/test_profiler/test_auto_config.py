@@ -1,6 +1,5 @@
 """Tests for the auto-config pre-scan tuning logic."""
 
-import pytest
 
 from vibe_profiler.config import AnalysisConfig, ProfilingConfig
 from vibe_profiler.profiler.auto_config import (

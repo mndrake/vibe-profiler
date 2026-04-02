@@ -1,7 +1,5 @@
 """Tests for cross-table column similarity detection."""
 
-import pytest
-from pyspark.sql import DataFrame
 
 from vibe_profiler.analyzer.similarity import CrossTableSimilarity
 from vibe_profiler.profiler.engine import ProfileEngine

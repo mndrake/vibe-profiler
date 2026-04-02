@@ -1,9 +1,6 @@
 """Tests for the Data Vault suggestion engine."""
 
-import pytest
-from pyspark.sql import DataFrame
 
-from vibe_profiler.config import PipelineConfig
 from vibe_profiler.pipeline import VibeProfilerPipeline
 
 

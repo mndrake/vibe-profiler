@@ -1,7 +1,5 @@
 """Integration tests for the full pipeline."""
 
-import pytest
-from pyspark.sql import DataFrame
 
 from vibe_profiler.pipeline import VibeProfilerPipeline
 from vibe_profiler.models.temporal import SCDType

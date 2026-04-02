@@ -1,6 +1,5 @@
 """Tests for business key detection."""
 
-import pytest
 from pyspark.sql import DataFrame
 
 from vibe_profiler.analyzer.business_key import BusinessKeyAnalyzer

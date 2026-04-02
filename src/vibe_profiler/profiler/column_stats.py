@@ -8,9 +8,7 @@ from __future__ import annotations
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
-    BooleanType,
     ByteType,
-    DateType,
     DecimalType,
     DoubleType,
     FloatType,
@@ -18,7 +16,6 @@ from pyspark.sql.types import (
     LongType,
     ShortType,
     StringType,
-    TimestampType,
 )
 
 _NUMERIC_TYPES = (

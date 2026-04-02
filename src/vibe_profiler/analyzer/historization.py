@@ -7,7 +7,7 @@ from pyspark.sql import functions as F
 
 from vibe_profiler.models.analysis import BusinessKeyCandidate
 from vibe_profiler.models.profile import TableProfile
-from vibe_profiler.models.temporal import HistorizationInfo, SCDType, TemporalColumn
+from vibe_profiler.models.temporal import HistorizationInfo, SCDType
 from vibe_profiler.profiler.temporal_detector import detect_temporal_columns
 
 

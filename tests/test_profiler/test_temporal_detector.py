@@ -1,6 +1,5 @@
 """Tests for temporal column detection."""
 
-import pytest
 from pyspark.sql import DataFrame
 
 from vibe_profiler.profiler.temporal_detector import detect_temporal_columns

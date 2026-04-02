@@ -1,6 +1,5 @@
 """Tests for the ProfileEngine."""
 
-import pytest
 from pyspark.sql import DataFrame
 
 from vibe_profiler.models.profile import PatternType

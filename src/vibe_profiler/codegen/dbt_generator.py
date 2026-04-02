@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -224,7 +223,7 @@ class DbtGenerator:
 
     def _generate_eff_satellite(self, sat: SatelliteSpec) -> None:
         link = next(
-            (l for l in self.spec.links if l.link_name == sat.parent_name), None
+            (lnk for lnk in self.spec.links if lnk.link_name == sat.parent_name), None
         )
         if link is None:
             return
@@ -319,5 +318,5 @@ class DbtGenerator:
         if sat.parent_type == "hub":
             hub = next((h for h in self.spec.hubs if h.hub_name == sat.parent_name), None)
             return hub.hash_key_name if hub else "unknown_hk"
-        link = next((l for l in self.spec.links if l.link_name == sat.parent_name), None)
+        link = next((lnk for lnk in self.spec.links if lnk.link_name == sat.parent_name), None)
         return link.hash_key_name if link else "unknown_hk"

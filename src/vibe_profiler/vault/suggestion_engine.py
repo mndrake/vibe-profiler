@@ -5,12 +5,10 @@ from __future__ import annotations
 from vibe_profiler.config import VaultConfig
 from vibe_profiler.models.analysis import (
     AnalysisResult,
-    BusinessKeyCandidate,
     Relationship,
-    SimilarityMatch,
 )
 from vibe_profiler.models.profile import ProfileResult
-from vibe_profiler.models.temporal import HistorizationInfo, SCDType
+from vibe_profiler.models.temporal import SCDType
 from vibe_profiler.models.vault_spec import DataVaultSpec, HubSpec, LinkSpec, SatelliteSpec
 from vibe_profiler.utils import normalize_name
 
