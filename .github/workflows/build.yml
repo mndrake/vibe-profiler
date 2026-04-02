@@ -3,6 +3,7 @@ name: Build & Test
 on:
   push:
     branches: [main, "claude/**"]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
