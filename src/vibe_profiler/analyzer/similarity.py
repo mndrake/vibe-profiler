@@ -28,17 +28,39 @@ class CrossTableSimilarity:
         self,
         profile_result: ProfileResult,
         tables: dict[str, DataFrame],
+        changed_tables: set[str] | None = None,
+        previous_matches: tuple[SimilarityMatch, ...] = (),
     ) -> tuple[SimilarityMatch, ...]:
-        """Compare every column pair across tables and return matches above threshold."""
+        """Compare column pairs across tables and return matches above threshold.
+
+        Args:
+            changed_tables: If provided, only compare pairs where at least one
+                table is in this set.  Previous matches between unchanged tables
+                are preserved from *previous_matches*.
+            previous_matches: Cached matches from a prior run.  Matches between
+                unchanged tables are carried forward without recomputation.
+        """
         # Build a flat list of (table_name, ColumnProfile) for cross-table pairs
         all_columns: list[tuple[str, ColumnProfile]] = []
         for tp in profile_result.tables:
             for cp in tp.column_profiles:
                 all_columns.append((tp.table_name, cp))
 
+        # Carry forward previous matches between unchanged tables
         matches: list[SimilarityMatch] = []
+        if changed_tables is not None and previous_matches:
+            for m in previous_matches:
+                if m.table_a not in changed_tables and m.table_b not in changed_tables:
+                    matches.append(m)
 
         for (t_a, cp_a), (t_b, cp_b) in combinations(all_columns, 2):
+            if t_a == t_b:
+                continue
+
+            # Skip pairs that don't involve any changed table (already cached)
+            if changed_tables is not None:
+                if t_a not in changed_tables and t_b not in changed_tables:
+                    continue
             if t_a == t_b:
                 continue
             # Quick type-compatibility filter

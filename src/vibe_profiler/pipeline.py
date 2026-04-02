@@ -118,46 +118,89 @@ class VibeProfilerPipeline:
         return self._profile_result
 
     def run_analysis(
-        self, profile_result: Optional[ProfileResult] = None
+        self,
+        profile_result: Optional[ProfileResult] = None,
+        tables_to_refresh: set[str] | None = None,
     ) -> AnalysisResult:
-        """Stage 2: Analyze profiles for BKs, similarity, relationships, historization."""
+        """Stage 2: Analyze profiles for BKs, similarity, relationships, historization.
+
+        Args:
+            tables_to_refresh: If provided, only re-analyze these tables.
+                Per-table results (BK, historization) for unchanged tables are
+                reused from the cached ``_analysis_result``.  Cross-table
+                analysis (similarity, relationships) only compares pairs
+                involving at least one changed table, carrying forward cached
+                results for unchanged pairs.
+        """
         pr = profile_result or self._profile_result
         if pr is None:
             pr = self.run_profiling()
+
+        prev = self._analysis_result
 
         # 4 analysis sub-steps
         tracker = ProgressTracker(
             stage="analysis", total=4, callback=self.progress_callback
         )
 
-        # Business keys
+        # Business keys — per-table, can reuse cached
         tracker.update(1, "business_keys", "Detecting business keys")
         bk_analyzer = BusinessKeyAnalyzer(config=self.config.analysis)
         business_keys: dict = {}
         for tp in pr.tables:
-            business_keys[tp.table_name] = bk_analyzer.analyze(tp)
+            if (
+                tables_to_refresh is not None
+                and prev is not None
+                and tp.table_name not in tables_to_refresh
+                and tp.table_name in prev.business_keys
+            ):
+                business_keys[tp.table_name] = prev.business_keys[tp.table_name]
+            else:
+                business_keys[tp.table_name] = bk_analyzer.analyze(tp)
 
-        # Cross-table similarity
-        tracker.update(2, "similarity", "Detecting cross-table column similarity")
+        # Cross-table similarity — incremental: only new pairs
+        n_changed = len(tables_to_refresh) if tables_to_refresh else len(self.tables)
+        tracker.update(
+            2, "similarity",
+            f"Detecting cross-table column similarity ({n_changed} table(s) to compare)",
+        )
         sim_analyzer = CrossTableSimilarity(self.spark, config=self.config.analysis)
-        similarity_matches = sim_analyzer.find_matches(pr, self.tables)
+        similarity_matches = sim_analyzer.find_matches(
+            pr,
+            self.tables,
+            changed_tables=tables_to_refresh,
+            previous_matches=prev.similarity_matches if prev else (),
+        )
 
-        # Relationships (uses similarity matches to also detect FK references)
+        # Relationships — incremental: only new pairs
         tracker.update(3, "relationships", "Detecting FK relationships")
         rel_analyzer = RelationshipAnalyzer(self.spark)
         relationships = rel_analyzer.analyze(
-            pr, business_keys, self.tables, similarity_matches
+            pr,
+            business_keys,
+            self.tables,
+            similarity_matches,
+            changed_tables=tables_to_refresh,
+            previous_relationships=prev.relationships if prev else (),
         )
 
-        # Historization
+        # Historization — per-table, can reuse cached
         tracker.update(4, "historization", "Detecting historization patterns")
         hist_analyzer = HistorizationAnalyzer()
         historization: dict = {}
         for tp in pr.tables:
-            bk_cands = business_keys.get(tp.table_name, ())
-            historization[tp.table_name] = hist_analyzer.analyze(
-                tp, self.tables[tp.table_name], bk_cands
-            )
+            if (
+                tables_to_refresh is not None
+                and prev is not None
+                and tp.table_name not in tables_to_refresh
+                and tp.table_name in prev.historization
+            ):
+                historization[tp.table_name] = prev.historization[tp.table_name]
+            else:
+                historization[tp.table_name] = hist_analyzer.analyze(
+                    tp, self.tables[tp.table_name],
+                    business_keys.get(tp.table_name, ()),
+                )
 
         tracker.complete("Analysis complete")
 

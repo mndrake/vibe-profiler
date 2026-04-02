@@ -32,8 +32,16 @@ class RelationshipAnalyzer:
         business_keys: dict[str, tuple[BusinessKeyCandidate, ...]],
         tables: dict[str, DataFrame],
         similarity_matches: tuple[SimilarityMatch, ...] = (),
+        changed_tables: set[str] | None = None,
+        previous_relationships: tuple[Relationship, ...] = (),
     ) -> tuple[Relationship, ...]:
         """Find relationships where one table's column values reference another's BK.
+
+        Args:
+            changed_tables: If provided, only check pairs involving at least one
+                changed table.  Cached relationships between unchanged tables are
+                preserved from *previous_relationships*.
+            previous_relationships: Carried forward from a prior run.
 
         Uses two strategies:
         1. Value containment: check if a non-BK column's values are a subset of
@@ -47,7 +55,12 @@ class RelationshipAnalyzer:
             if candidates:
                 bk_columns[table_name] = candidates[0].column_name
 
+        # Carry forward relationships between unchanged tables
         relationships: list[Relationship] = []
+        if changed_tables is not None and previous_relationships:
+            for r in previous_relationships:
+                if r.parent_table not in changed_tables and r.child_table not in changed_tables:
+                    relationships.append(r)
         seen: set[tuple[str, str, str, str]] = set()
 
         # --- Strategy 1: Similarity matches that link a non-BK to a BK ---
@@ -96,6 +109,11 @@ class RelationshipAnalyzer:
                         continue  # mostly null — unlikely FK
 
                     for parent_table, parent_bk in bk_columns.items():
+                        # Skip pairs between two unchanged tables
+                        if changed_tables is not None:
+                            if (tp.table_name not in changed_tables
+                                    and parent_table not in changed_tables):
+                                continue
                         if parent_table == tp.table_name:
                             continue
 
