@@ -1,17 +1,17 @@
 version: 2
 
 models:
-{%- for model in models %}
+{% for model in models %}
   - name: {{ model.name }}
     description: "{{ model.description }}"
     columns:
-{%- for col in model.columns %}
+{% for col in model.columns %}
       - name: {{ col.name }}
         description: "{{ col.description }}"
-{%- if col.is_primary_key %}
+{% if col.is_primary_key %}
         tests:
           - unique
           - not_null
-{%- endif %}
-{%- endfor %}
-{%- endfor %}
+{% endif %}
+{% endfor %}
+{% endfor %}

@@ -11,23 +11,23 @@ derived_columns:
   {{ effective_from_column }}:
     value: "CURRENT_TIMESTAMP()"
 hashed_columns:
-{%- for hash_entry in hashed_columns %}
+{% for hash_entry in hashed_columns %}
   {{ hash_entry.name }}:
-{%- if hash_entry.is_hashdiff %}
+{% if hash_entry.is_hashdiff %}
     is_hashdiff: true
     columns:
-{%- for col in hash_entry.columns %}
+{% for col in hash_entry.columns %}
       - "{{ col }}"
-{%- endfor %}
-{%- elif hash_entry.columns | length > 1 %}
+{% endfor %}
+{% elif hash_entry.columns | length > 1 %}
     columns:
-{%- for col in hash_entry.columns %}
+{% for col in hash_entry.columns %}
       - "{{ col }}"
-{%- endfor %}
-{%- else %}
+{% endfor %}
+{% else %}
     - "{{ hash_entry.columns[0] }}"
-{%- endif %}
-{%- endfor %}
+{% endif %}
+{% endfor %}
 
 {%- raw %}
 {%- endset -%}
