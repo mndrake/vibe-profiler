@@ -1,0 +1,38 @@
+{#- automate-dv effectivity satellite model template -#}
+{{ '{{' }} config(materialized='{{ materialized }}', schema='{{ schema }}') {{ '}}' }}
+
+{%- set src_pk_str -%}"{{ link_hash_key }}"{%- endset %}
+{%- set src_dfk_str -%}"{{ driving_fk }}"{%- endset %}
+{%- set src_sfk_list -%}
+[
+{%- for fk in secondary_fks -%}
+"{{ fk }}"{{ ", " if not loop.last }}
+{%- endfor -%}
+]
+{%- endset %}
+{%- set src_start_date_str -%}"{{ effective_from_column }}"{%- endset %}
+{%- set src_end_date_str -%}"{{ effective_to_column }}"{%- endset %}
+{%- set src_eff_str -%}"{{ effective_from_column }}"{%- endset %}
+{%- set src_ldts_str -%}"{{ load_date_column }}"{%- endset %}
+{%- set src_source_str -%}"{{ record_source_column }}"{%- endset %}
+{%- set source_model_str -%}"{{ staging_model }}"{%- endset %}
+
+{{ '{%' }} set src_pk = {{ src_pk_str }} {{ '%}' }}
+{{ '{%' }} set src_dfk = {{ src_dfk_str }} {{ '%}' }}
+{{ '{%' }} set src_sfk = {{ src_sfk_list }} {{ '%}' }}
+{{ '{%' }} set src_start_date = {{ src_start_date_str }} {{ '%}' }}
+{{ '{%' }} set src_end_date = {{ src_end_date_str }} {{ '%}' }}
+{{ '{%' }} set src_eff = {{ src_eff_str }} {{ '%}' }}
+{{ '{%' }} set src_ldts = {{ src_ldts_str }} {{ '%}' }}
+{{ '{%' }} set src_source = {{ src_source_str }} {{ '%}' }}
+{{ '{%' }} set source_model = {{ source_model_str }} {{ '%}' }}
+
+{{ '{{' }} automate_dv.eff_sat(src_pk=src_pk,
+                   src_dfk=src_dfk,
+                   src_sfk=src_sfk,
+                   src_start_date=src_start_date,
+                   src_end_date=src_end_date,
+                   src_eff=src_eff,
+                   src_ldts=src_ldts,
+                   src_source=src_source,
+                   source_model=source_model) {{ '}}' }}

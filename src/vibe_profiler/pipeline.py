@@ -1,0 +1,205 @@
+"""End-to-end orchestration: profile -> analyze -> suggest -> generate."""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from pyspark.sql import DataFrame, SparkSession
+
+from vibe_profiler.analyzer.business_key import BusinessKeyAnalyzer
+from vibe_profiler.analyzer.historization import HistorizationAnalyzer
+from vibe_profiler.analyzer.relationship import RelationshipAnalyzer
+from vibe_profiler.analyzer.similarity import CrossTableSimilarity
+from vibe_profiler.codegen.config import DbtConfig
+from vibe_profiler.codegen.dbt_generator import DbtGenerator
+from vibe_profiler.config import PipelineConfig
+from vibe_profiler.models.analysis import AnalysisResult
+from vibe_profiler.models.profile import ProfileResult
+from vibe_profiler.models.vault_spec import DataVaultSpec
+from vibe_profiler.profiler.engine import ProfileEngine
+from vibe_profiler.vault.suggestion_engine import VaultSuggestionEngine
+
+
+class VibeProfilerPipeline:
+    """Run the full profiling pipeline or individual stages.
+
+    Usage on Databricks::
+
+        from vibe_profiler import VibeProfilerPipeline
+
+        tables = {
+            "customers": spark.table("raw.customers"),
+            "orders": spark.table("raw.orders"),
+        }
+        pipeline = VibeProfilerPipeline(spark, tables)
+        files = pipeline.run_all()  # returns {path: sql_content}
+        pipeline.write_dbt_project("/Workspace/dbt_output")
+    """
+
+    def __init__(
+        self,
+        spark: SparkSession,
+        tables: dict[str, DataFrame],
+        config: PipelineConfig | None = None,
+        dbt_config: DbtConfig | None = None,
+    ) -> None:
+        self.spark = spark
+        self.tables = tables
+        self.config = config or PipelineConfig()
+        self.dbt_config = dbt_config or DbtConfig()
+
+        # Intermediate results (populated as stages run)
+        self._profile_result: Optional[ProfileResult] = None
+        self._analysis_result: Optional[AnalysisResult] = None
+        self._vault_spec: Optional[DataVaultSpec] = None
+        self._generated_files: Optional[dict[str, str]] = None
+
+    # ------------------------------------------------------------------
+    # Stage runners
+    # ------------------------------------------------------------------
+
+    def run_profiling(self) -> ProfileResult:
+        """Stage 1: Profile all tables."""
+        engine = ProfileEngine(self.spark, config=self.config.profiling)
+        self._profile_result = engine.profile_tables(self.tables)
+        return self._profile_result
+
+    def run_analysis(
+        self, profile_result: Optional[ProfileResult] = None
+    ) -> AnalysisResult:
+        """Stage 2: Analyze profiles for BKs, similarity, relationships, historization."""
+        pr = profile_result or self._profile_result
+        if pr is None:
+            pr = self.run_profiling()
+
+        # Business keys
+        bk_analyzer = BusinessKeyAnalyzer(config=self.config.analysis)
+        business_keys: dict = {}
+        for tp in pr.tables:
+            business_keys[tp.table_name] = bk_analyzer.analyze(tp)
+
+        # Cross-table similarity
+        sim_analyzer = CrossTableSimilarity(self.spark, config=self.config.analysis)
+        similarity_matches = sim_analyzer.find_matches(pr, self.tables)
+
+        # Relationships
+        rel_analyzer = RelationshipAnalyzer(self.spark)
+        relationships = rel_analyzer.analyze(pr, business_keys, self.tables)
+
+        # Historization
+        hist_analyzer = HistorizationAnalyzer()
+        historization: dict = {}
+        for tp in pr.tables:
+            bk_cands = business_keys.get(tp.table_name, ())
+            historization[tp.table_name] = hist_analyzer.analyze(
+                tp, self.tables[tp.table_name], bk_cands
+            )
+
+        self._analysis_result = AnalysisResult(
+            business_keys=business_keys,
+            similarity_matches=similarity_matches,
+            relationships=relationships,
+            historization=historization,
+        )
+        return self._analysis_result
+
+    def run_suggestion(
+        self, analysis_result: Optional[AnalysisResult] = None
+    ) -> DataVaultSpec:
+        """Stage 3: Suggest Data Vault 2.0 entities."""
+        ar = analysis_result or self._analysis_result
+        if ar is None:
+            ar = self.run_analysis()
+
+        pr = self._profile_result
+        if pr is None:
+            pr = self.run_profiling()
+
+        engine = VaultSuggestionEngine(config=self.config.vault)
+        self._vault_spec = engine.suggest(pr, ar)
+        return self._vault_spec
+
+    def run_codegen(
+        self, vault_spec: Optional[DataVaultSpec] = None
+    ) -> dict[str, str]:
+        """Stage 4: Generate dbt model files (automate-dv compatible)."""
+        vs = vault_spec or self._vault_spec
+        if vs is None:
+            vs = self.run_suggestion()
+
+        gen = DbtGenerator(vs, dbt_config=self.dbt_config)
+        self._generated_files = gen.generate_all()
+        return self._generated_files
+
+    def run_all(self) -> dict[str, str]:
+        """Execute the full pipeline and return generated dbt files."""
+        self.run_profiling()
+        self.run_analysis()
+        self.run_suggestion()
+        return self.run_codegen()
+
+    # ------------------------------------------------------------------
+    # Interactive overrides
+    # ------------------------------------------------------------------
+
+    def override_business_keys(self, overrides: dict[str, list[str]]) -> None:
+        """Manually set business key columns per table.
+
+        Call before ``run_suggestion`` to override auto-detected BKs.
+
+        Args:
+            overrides: ``{"table_name": ["col1", "col2"]}``
+        """
+        if self._analysis_result is None:
+            self.run_analysis()
+
+        from vibe_profiler.models.analysis import BusinessKeyCandidate
+
+        assert self._analysis_result is not None
+        for table_name, columns in overrides.items():
+            manual = tuple(
+                BusinessKeyCandidate(
+                    table_name=table_name,
+                    column_name=col,
+                    score=1.0,
+                    uniqueness=1.0,
+                    null_rate=0.0,
+                    pattern_stability=1.0,
+                    reasoning=("Manually specified",),
+                )
+                for col in columns
+            )
+            self._analysis_result.business_keys[table_name] = manual
+
+    def override_vault_spec(self, spec: DataVaultSpec) -> None:
+        """Replace the auto-suggested vault spec with a manually adjusted one."""
+        self._vault_spec = spec
+
+    # ------------------------------------------------------------------
+    # Output helpers
+    # ------------------------------------------------------------------
+
+    def write_dbt_project(self, output_dir: str | None = None) -> list[str]:
+        """Write generated files to disk. Returns list of written file paths."""
+        if self._generated_files is None:
+            self.run_all()
+        assert self._vault_spec is not None
+        gen = DbtGenerator(self._vault_spec, dbt_config=self.dbt_config)
+        gen._files = self._generated_files or {}
+        return gen.write_to_disk(output_dir)
+
+    @property
+    def profile_result(self) -> Optional[ProfileResult]:
+        return self._profile_result
+
+    @property
+    def analysis_result(self) -> Optional[AnalysisResult]:
+        return self._analysis_result
+
+    @property
+    def vault_spec(self) -> Optional[DataVaultSpec]:
+        return self._vault_spec
+
+    @property
+    def generated_files(self) -> Optional[dict[str, str]]:
+        return self._generated_files

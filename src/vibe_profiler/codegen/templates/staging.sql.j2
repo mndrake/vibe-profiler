@@ -1,0 +1,47 @@
+{#- automate-dv staging model template -#}
+{%- raw %}{%- set yaml_metadata -%}{% endraw %}
+
+source_model:
+  {{ source_name }}: "{{ source_table }}"
+derived_columns:
+  {{ record_source_column }}:
+    value: "{{ source_table }}"
+  {{ load_date_column }}:
+    value: "CURRENT_TIMESTAMP()"
+  {{ effective_from_column }}:
+    value: "CURRENT_TIMESTAMP()"
+hashed_columns:
+{%- for hash_entry in hashed_columns %}
+  {{ hash_entry.name }}:
+{%- if hash_entry.is_hashdiff %}
+    is_hashdiff: true
+    columns:
+{%- for col in hash_entry.columns %}
+      - "{{ col }}"
+{%- endfor %}
+{%- elif hash_entry.columns | length > 1 %}
+    columns:
+{%- for col in hash_entry.columns %}
+      - "{{ col }}"
+{%- endfor %}
+{%- else %}
+    - "{{ hash_entry.columns[0] }}"
+{%- endif %}
+{%- endfor %}
+
+{%- raw %}
+{%- endset -%}
+
+{% set metadata_dict = fromyaml(yaml_metadata) %}
+
+{% set source_model = metadata_dict["source_model"] %}
+{% set derived_columns = metadata_dict["derived_columns"] %}
+{% set hashed_columns = metadata_dict["hashed_columns"] %}
+{% set ranked_columns = metadata_dict.get("ranked_columns", {}) %}
+
+{{ automate_dv.stage(include_source_columns=true,
+                  source_model=source_model,
+                  derived_columns=derived_columns,
+                  hashed_columns=hashed_columns,
+                  ranked_columns=ranked_columns) }}
+{% endraw %}

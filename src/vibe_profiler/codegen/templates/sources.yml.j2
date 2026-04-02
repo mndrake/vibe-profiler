@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: {{ source_name }}
+    schema: {{ source_schema }}
+    tables:
+{%- for table in source_tables %}
+      - name: {{ table }}
+{%- endfor %}

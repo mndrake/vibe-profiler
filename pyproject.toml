@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vibe-profiler"
+version = "0.1.0"
+description = "Data Vault 2.0 profiling and dbt code generation for Databricks"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "pyspark>=3.4.0",
+    "Jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-spark>=0.6",
+    "chispa>=0.9",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vibe_profiler"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
