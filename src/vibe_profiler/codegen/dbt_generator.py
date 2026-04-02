@@ -127,24 +127,31 @@ class DbtGenerator:
         # Hash keys for links sourced from this table
         for link in self.spec.links:
             if source_table in link.source_tables:
-                # Link hash key = concat of all FK hash keys
-                all_bk_cols: list[str] = []
-                for hub_name, cols in link.foreign_key_columns.items():
-                    all_bk_cols.extend(cols)
-                entries.append({
-                    "name": link.hash_key_name,
-                    "columns": list(dict.fromkeys(all_bk_cols)),  # dedupe, preserve order
-                    "is_hashdiff": False,
-                })
-                # Individual FK hash keys
+                # Individual FK hash keys for each referenced hub
+                # Use the link's foreign_key_columns (the actual source column names)
+                # rather than the hub's business_key_columns (which may differ)
                 for hub_name in link.hub_references:
                     hub = next((h for h in self.spec.hubs if h.hub_name == hub_name), None)
                     if hub and hub.hash_key_name not in [e["name"] for e in entries]:
+                        # Prefer the link's FK mapping for this hub (source column names)
+                        fk_cols = link.foreign_key_columns.get(hub_name)
+                        columns = list(fk_cols) if fk_cols else list(hub.business_key_columns)
                         entries.append({
                             "name": hub.hash_key_name,
-                            "columns": list(hub.business_key_columns),
+                            "columns": columns,
                             "is_hashdiff": False,
                         })
+
+                # Link hash key = composite of all FK source columns
+                all_fk_cols: list[str] = []
+                for hub_name in link.hub_references:
+                    fk_cols = link.foreign_key_columns.get(hub_name, ())
+                    all_fk_cols.extend(fk_cols)
+                entries.append({
+                    "name": link.hash_key_name,
+                    "columns": list(dict.fromkeys(all_fk_cols)),  # dedupe, preserve order
+                    "is_hashdiff": False,
+                })
 
         # Hashdiffs for satellites sourced from this table
         for sat in self.spec.satellites:
