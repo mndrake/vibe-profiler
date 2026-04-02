@@ -17,6 +17,7 @@ from vibe_profiler.models.analysis import AnalysisResult
 from vibe_profiler.models.profile import ProfileResult
 from vibe_profiler.models.vault_spec import DataVaultSpec
 from vibe_profiler.profiler.engine import ProfileEngine
+from vibe_profiler.progress import ProgressCallback, ProgressTracker
 from vibe_profiler.vault.suggestion_engine import VaultSuggestionEngine
 
 
@@ -42,11 +43,13 @@ class VibeProfilerPipeline:
         tables: dict[str, DataFrame],
         config: PipelineConfig | None = None,
         dbt_config: DbtConfig | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         self.spark = spark
         self.tables = tables
         self.config = config or PipelineConfig()
         self.dbt_config = dbt_config or DbtConfig()
+        self.progress_callback = progress_callback
 
         # Intermediate results (populated as stages run)
         self._profile_result: Optional[ProfileResult] = None
@@ -60,7 +63,11 @@ class VibeProfilerPipeline:
 
     def run_profiling(self) -> ProfileResult:
         """Stage 1: Profile all tables."""
-        engine = ProfileEngine(self.spark, config=self.config.profiling)
+        engine = ProfileEngine(
+            self.spark,
+            config=self.config.profiling,
+            progress_callback=self.progress_callback,
+        )
         self._profile_result = engine.profile_tables(self.tables)
         return self._profile_result
 
@@ -72,21 +79,30 @@ class VibeProfilerPipeline:
         if pr is None:
             pr = self.run_profiling()
 
+        # 4 analysis sub-steps
+        tracker = ProgressTracker(
+            stage="analysis", total=4, callback=self.progress_callback
+        )
+
         # Business keys
+        tracker.update(1, "business_keys", "Detecting business keys")
         bk_analyzer = BusinessKeyAnalyzer(config=self.config.analysis)
         business_keys: dict = {}
         for tp in pr.tables:
             business_keys[tp.table_name] = bk_analyzer.analyze(tp)
 
         # Cross-table similarity
+        tracker.update(2, "similarity", "Detecting cross-table column similarity")
         sim_analyzer = CrossTableSimilarity(self.spark, config=self.config.analysis)
         similarity_matches = sim_analyzer.find_matches(pr, self.tables)
 
         # Relationships
+        tracker.update(3, "relationships", "Detecting FK relationships")
         rel_analyzer = RelationshipAnalyzer(self.spark)
         relationships = rel_analyzer.analyze(pr, business_keys, self.tables)
 
         # Historization
+        tracker.update(4, "historization", "Detecting historization patterns")
         hist_analyzer = HistorizationAnalyzer()
         historization: dict = {}
         for tp in pr.tables:
@@ -94,6 +110,8 @@ class VibeProfilerPipeline:
             historization[tp.table_name] = hist_analyzer.analyze(
                 tp, self.tables[tp.table_name], bk_cands
             )
+
+        tracker.complete("Analysis complete")
 
         self._analysis_result = AnalysisResult(
             business_keys=business_keys,
