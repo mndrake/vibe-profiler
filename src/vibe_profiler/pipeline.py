@@ -61,8 +61,15 @@ class VibeProfilerPipeline:
     # Stage runners
     # ------------------------------------------------------------------
 
-    def run_profiling(self) -> ProfileResult:
-        """Stage 1: Profile all tables.
+    def run_profiling(
+        self, tables_to_refresh: set[str] | None = None
+    ) -> ProfileResult:
+        """Stage 1: Profile tables.
+
+        Args:
+            tables_to_refresh: If provided, only these tables are re-profiled;
+                cached profiles for other tables are preserved.  Pass ``None``
+                (the default) to profile everything.
 
         When ``auto_tune`` is enabled, a lightweight pre-scan adjusts the
         analysis config (e.g. ``value_sample_size``) based on table sizes.
@@ -87,7 +94,27 @@ class VibeProfilerPipeline:
             config=self.config.profiling,
             progress_callback=self.progress_callback,
         )
-        self._profile_result = engine.profile_tables(self.tables)
+
+        if tables_to_refresh is not None and self._profile_result is not None:
+            # Incremental: only profile the requested tables
+            subset = {k: v for k, v in self.tables.items() if k in tables_to_refresh}
+            if subset:
+                new_profiles = engine.profile_tables(subset)
+                self._profile_result = self._merge_profiles(
+                    self._profile_result, new_profiles
+                )
+            # Also drop cached profiles for tables no longer in self.tables
+            current_names = set(self.tables.keys())
+            self._profile_result = ProfileResult(
+                tables=tuple(
+                    tp for tp in self._profile_result.tables
+                    if tp.table_name in current_names
+                ),
+                profiled_at=self._profile_result.profiled_at,
+            )
+        else:
+            self._profile_result = engine.profile_tables(self.tables)
+
         return self._profile_result
 
     def run_analysis(
@@ -213,6 +240,57 @@ class VibeProfilerPipeline:
     def override_vault_spec(self, spec: DataVaultSpec) -> None:
         """Replace the auto-suggested vault spec with a manually adjusted one."""
         self._vault_spec = spec
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def save_results(self, path: str) -> None:
+        """Save profiling and analysis results to a JSON file.
+
+        Allows resuming later without re-profiling unchanged tables::
+
+            pipeline.run_all()
+            pipeline.save_results("/Workspace/cache/my_project.json")
+        """
+        from vibe_profiler.serialization import save_results
+
+        save_results(
+            path,
+            profile_result=self._profile_result,
+            analysis_result=self._analysis_result,
+        )
+
+    def load_results(self, path: str) -> None:
+        """Load previously saved profiling and analysis results.
+
+        After loading, use ``run_profiling(tables_to_refresh={"new_table"})``
+        to incrementally profile only new or changed tables::
+
+            pipeline.load_results("/Workspace/cache/my_project.json")
+            pipeline.run_profiling(tables_to_refresh={"products"})
+            pipeline.run_analysis()
+        """
+        from vibe_profiler.serialization import load_results
+
+        pr, ar = load_results(path)
+        if pr is not None:
+            self._profile_result = pr
+        if ar is not None:
+            self._analysis_result = ar
+
+    @staticmethod
+    def _merge_profiles(
+        previous: ProfileResult, new_partial: ProfileResult
+    ) -> ProfileResult:
+        """Merge cached profiles with newly profiled tables."""
+        by_name = {tp.table_name: tp for tp in previous.tables}
+        for tp in new_partial.tables:
+            by_name[tp.table_name] = tp
+        return ProfileResult(
+            tables=tuple(sorted(by_name.values(), key=lambda t: t.table_name)),
+            profiled_at=new_partial.profiled_at,
+        )
 
     # ------------------------------------------------------------------
     # Output helpers
