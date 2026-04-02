@@ -115,10 +115,12 @@ class VibeProfilerPipeline:
         sim_analyzer = CrossTableSimilarity(self.spark, config=self.config.analysis)
         similarity_matches = sim_analyzer.find_matches(pr, self.tables)
 
-        # Relationships
+        # Relationships (uses similarity matches to also detect FK references)
         tracker.update(3, "relationships", "Detecting FK relationships")
         rel_analyzer = RelationshipAnalyzer(self.spark)
-        relationships = rel_analyzer.analyze(pr, business_keys, self.tables)
+        relationships = rel_analyzer.analyze(
+            pr, business_keys, self.tables, similarity_matches
+        )
 
         # Historization
         tracker.update(4, "historization", "Detecting historization patterns")

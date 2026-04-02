@@ -5,17 +5,21 @@ from __future__ import annotations
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from vibe_profiler.models.analysis import BusinessKeyCandidate, Relationship
+from vibe_profiler.models.analysis import BusinessKeyCandidate, Relationship, SimilarityMatch
 from vibe_profiler.models.profile import ProfileResult
 
 
 class RelationshipAnalyzer:
-    """Identify FK-like relationships by checking value containment between columns."""
+    """Identify FK-like relationships by checking value containment between columns.
+
+    Also uses similarity matches to detect relationships when a non-BK column
+    in one table is similar to a BK column in another table.
+    """
 
     def __init__(
         self,
         spark: SparkSession,
-        containment_threshold: float = 0.85,
+        containment_threshold: float = 0.50,
         sample_size: int = 10_000,
     ) -> None:
         self.spark = spark
@@ -27,69 +31,118 @@ class RelationshipAnalyzer:
         profile_result: ProfileResult,
         business_keys: dict[str, tuple[BusinessKeyCandidate, ...]],
         tables: dict[str, DataFrame],
+        similarity_matches: tuple[SimilarityMatch, ...] = (),
     ) -> tuple[Relationship, ...]:
-        """Find relationships where one table's column values are a subset of another's BK."""
+        """Find relationships where one table's column values reference another's BK.
+
+        Uses two strategies:
+        1. Value containment: check if a non-BK column's values are a subset of
+           another table's BK column.
+        2. Similarity matches: if a non-BK column in table A is similar to a BK
+           column in table B, that implies a FK relationship.
+        """
         # Collect the top BK candidate per table
         bk_columns: dict[str, str] = {}
         for table_name, candidates in business_keys.items():
             if candidates:
                 bk_columns[table_name] = candidates[0].column_name
 
-        if len(bk_columns) < 2:
-            return ()
-
         relationships: list[Relationship] = []
+        seen: set[tuple[str, str, str, str]] = set()
 
-        # For each non-BK column in each table, check if its values are contained
-        # in some other table's BK column
-        for tp in profile_result.tables:
-            for cp in tp.column_profiles:
-                if cp.column_name == bk_columns.get(tp.table_name):
-                    continue  # skip the table's own BK
-                if cp.uniqueness < 0.01 or cp.null_rate > 0.50:
-                    continue  # unlikely FK
+        # --- Strategy 1: Similarity matches that link a non-BK to a BK ---
+        for match in similarity_matches:
+            # Check if one side is a BK and the other is not
+            a_is_bk = bk_columns.get(match.table_a) == match.column_a
+            b_is_bk = bk_columns.get(match.table_b) == match.column_b
 
-                for parent_table, parent_bk in bk_columns.items():
-                    if parent_table == tp.table_name:
-                        continue
+            if a_is_bk and not b_is_bk:
+                parent_table, parent_col = match.table_a, match.column_a
+                child_table, child_col = match.table_b, match.column_b
+            elif b_is_bk and not a_is_bk:
+                parent_table, parent_col = match.table_b, match.column_b
+                child_table, child_col = match.table_a, match.column_a
+            elif a_is_bk and b_is_bk:
+                # Both are BKs — this is a hub merge, not a link
+                continue
+            else:
+                # Neither is a BK — skip
+                continue
 
-                    # Quick type check
-                    parent_tp = next(
-                        (t for t in profile_result.tables if t.table_name == parent_table),
-                        None,
-                    )
-                    if parent_tp is None:
-                        continue
-                    parent_cp = next(
-                        (c for c in parent_tp.column_profiles if c.column_name == parent_bk),
-                        None,
-                    )
-                    if parent_cp is None:
-                        continue
-                    if cp.is_numeric != parent_cp.is_numeric:
-                        continue
+            key = (parent_table, parent_col, child_table, child_col)
+            if key in seen:
+                continue
+            seen.add(key)
 
-                    containment = self._check_containment(
-                        tables[tp.table_name],
-                        cp.column_name,
-                        tables[parent_table],
-                        parent_bk,
-                    )
+            cardinality = "1:N"  # FK to BK is typically 1:N
+            relationships.append(
+                Relationship(
+                    parent_table=parent_table,
+                    parent_column=parent_col,
+                    child_table=child_table,
+                    child_column=child_col,
+                    confidence=round(match.composite_score, 4),
+                    cardinality=cardinality,
+                )
+            )
 
-                    if containment >= self.containment_threshold:
-                        cardinality = self._estimate_cardinality(
-                            cp.uniqueness, parent_cp.uniqueness
+        # --- Strategy 2: Value containment for non-BK columns ---
+        if len(bk_columns) >= 2:
+            for tp in profile_result.tables:
+                for cp in tp.column_profiles:
+                    if cp.column_name == bk_columns.get(tp.table_name):
+                        continue  # skip the table's own BK
+                    if cp.null_rate > 0.80:
+                        continue  # mostly null — unlikely FK
+
+                    for parent_table, parent_bk in bk_columns.items():
+                        if parent_table == tp.table_name:
+                            continue
+
+                        key = (parent_table, parent_bk, tp.table_name, cp.column_name)
+                        if key in seen:
+                            continue
+
+                        # Quick type check
+                        parent_tp = next(
+                            (t for t in profile_result.tables
+                             if t.table_name == parent_table),
+                            None,
                         )
-                        relationships.append(
-                            Relationship(
-                                parent_table=parent_table,
-                                parent_column=parent_bk,
-                                child_table=tp.table_name,
-                                child_column=cp.column_name,
-                                confidence=round(containment, 4),
-                                cardinality=cardinality,
+                        if parent_tp is None:
+                            continue
+                        parent_cp = next(
+                            (c for c in parent_tp.column_profiles
+                             if c.column_name == parent_bk),
+                            None,
+                        )
+                        if parent_cp is None:
+                            continue
+                        if cp.is_numeric != parent_cp.is_numeric:
+                            continue
+
+                        containment = self._check_containment(
+                            tables[tp.table_name],
+                            cp.column_name,
+                            tables[parent_table],
+                            parent_bk,
+                        )
+
+                        if containment >= self.containment_threshold:
+                            seen.add(key)
+                            cardinality = self._estimate_cardinality(
+                                cp.uniqueness, parent_cp.uniqueness
                             )
-                        )
+                            relationships.append(
+                                Relationship(
+                                    parent_table=parent_table,
+                                    parent_column=parent_bk,
+                                    child_table=tp.table_name,
+                                    child_column=cp.column_name,
+                                    confidence=round(containment, 4),
+                                    cardinality=cardinality,
+                                )
+                            )
 
         relationships.sort(key=lambda r: r.confidence, reverse=True)
         return tuple(relationships)
