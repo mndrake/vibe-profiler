@@ -14,6 +14,7 @@ from vibe_profiler.profiler.column_stats import (
     compute_basic_stats,
     compute_top_values,
 )
+from vibe_profiler.profiler.auto_config import auto_tune_config, collect_table_metrics
 from vibe_profiler.profiler.pattern_detector import detect_pattern
 from vibe_profiler.profiler.sampling import auto_sample
 from vibe_profiler.progress import ProgressCallback, ProgressTracker
@@ -42,16 +43,23 @@ class ProfileEngine:
         _table_index: int = 0,
     ) -> TableProfile:
         """Profile every column of *df* and return a ``TableProfile``."""
+        # Auto-tune config per table when enabled
+        if self.config.auto_tune:
+            metrics = collect_table_metrics(df)
+            table_config = auto_tune_config(self.config, metrics)
+        else:
+            table_config = self.config
+
         sampled_df, was_sampled, sample_frac = auto_sample(
             df,
-            threshold_rows=self.config.sample_threshold_rows,
-            forced_fraction=self.config.sample_fraction,
+            threshold_rows=table_config.sample_threshold_rows,
+            forced_fraction=table_config.sample_fraction,
         )
 
         basic = compute_basic_stats(
             sampled_df,
-            approx_distinct=self.config.approx_distinct,
-            column_batch_size=self.config.column_batch_size,
+            approx_distinct=table_config.approx_distinct,
+            column_batch_size=table_config.column_batch_size,
         )
 
         fields = [f for f in df.schema.fields if f.name in basic]
@@ -85,11 +93,11 @@ class ProfileEngine:
                 pattern, coverage = PatternType.UNKNOWN, 0.0
 
             top_vals = compute_top_values(
-                sampled_df, col_name, n=self.config.max_top_values
+                sampled_df, col_name, n=table_config.max_top_values
             )
 
             quantiles = compute_approx_quantiles(
-                sampled_df, col_name, error=self.config.approx_quantile_error
+                sampled_df, col_name, error=table_config.approx_quantile_error
             )
 
             col_profiles.append(

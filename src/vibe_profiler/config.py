@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ProfilingConfig:
-    """Controls how raw data is profiled."""
+    """Controls how raw data is profiled.
+
+    When *auto_tune* is ``True`` (the default), a lightweight pre-scan adapts
+    settings per table based on column count and row count.  Any field the user
+    explicitly provides via :meth:`create` is preserved — auto-tuning only
+    overrides fields left at their defaults.
+    """
 
     sample_fraction: float | None = None
     sample_threshold_rows: int = 10_000_000
@@ -15,6 +21,17 @@ class ProfilingConfig:
     approx_quantile_error: float = 0.01
     approx_distinct: bool = True
     column_batch_size: int = 50
+    auto_tune: bool = True
+
+    # Tracks which fields the user explicitly set (so auto-tune can skip them).
+    _user_set_fields: frozenset[str] = field(
+        default_factory=frozenset, repr=False, compare=False
+    )
+
+    @classmethod
+    def create(cls, **kwargs) -> ProfilingConfig:
+        """Construct a config while recording which fields were explicitly provided."""
+        return cls(**kwargs, _user_set_fields=frozenset(kwargs.keys()))
 
 
 @dataclass

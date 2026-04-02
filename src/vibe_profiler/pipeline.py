@@ -62,7 +62,26 @@ class VibeProfilerPipeline:
     # ------------------------------------------------------------------
 
     def run_profiling(self) -> ProfileResult:
-        """Stage 1: Profile all tables."""
+        """Stage 1: Profile all tables.
+
+        When ``auto_tune`` is enabled, a lightweight pre-scan adjusts the
+        analysis config (e.g. ``value_sample_size``) based on table sizes.
+        """
+        if self.config.profiling.auto_tune:
+            from dataclasses import replace as _replace
+            from vibe_profiler.profiler.auto_config import (
+                auto_tune_analysis_config,
+                collect_table_metrics,
+            )
+
+            all_metrics = {
+                name: collect_table_metrics(df) for name, df in self.tables.items()
+            }
+            tuned_analysis = auto_tune_analysis_config(
+                self.config.analysis, all_metrics
+            )
+            self.config = _replace(self.config, analysis=tuned_analysis)
+
         engine = ProfileEngine(
             self.spark,
             config=self.config.profiling,
