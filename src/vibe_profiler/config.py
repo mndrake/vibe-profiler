@@ -16,7 +16,7 @@ class ProfilingConfig:
     """
 
     sample_fraction: float | None = None
-    sample_threshold_rows: int = 10_000_000
+    sample_threshold_rows: int = 5_000_000
     max_top_values: int = 20
     approx_quantile_error: float = 0.01
     approx_distinct: bool = True

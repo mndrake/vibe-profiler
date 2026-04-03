@@ -7,8 +7,8 @@ from pyspark.sql import DataFrame
 
 def auto_sample(
     df: DataFrame,
-    threshold_rows: int = 10_000_000,
-    target_rows: int = 1_000_000,
+    threshold_rows: int = 5_000_000,
+    target_rows: int = 5_000_000,
     forced_fraction: float | None = None,
 ) -> tuple[DataFrame, bool, float | None]:
     """Return (possibly-sampled df, was_sampled, sample_fraction).
