@@ -67,6 +67,9 @@ jobs:
           git tag "v${{ steps.bump.outputs.version }}"
           git push origin HEAD --tags
 
+      - name: Push to main
+        run: git push origin HEAD:refs/heads/main
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
