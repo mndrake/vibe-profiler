@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vibe-profiler"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Data Vault 2.0 profiling and dbt code generation for Databricks"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -21,6 +21,9 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
+
+[tool.hatch.version]
+path = "src/vibe_profiler/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vibe_profiler"]

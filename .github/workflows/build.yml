@@ -1,9 +1,8 @@
-name: Build & Test
+name: CI
 
 on:
   push:
     branches: [main, "claude/**"]
-    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -64,50 +63,3 @@ jobs:
         with:
           name: vibe-profiler-sdist
           path: dist/*.tar.gz
-
-  # Create GitHub Release with wheel on tagged pushes
-  release:
-    runs-on: ubuntu-latest
-    needs: build-wheel
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write  # needed to create releases
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: vibe-profiler-wheel
-          path: dist/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: vibe-profiler-sdist
-          path: dist/
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            dist/*.whl
-            dist/*.tar.gz
-
-  # Publish to PyPI on tagged releases
-  publish:
-    runs-on: ubuntu-latest
-    needs: build-wheel
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      id-token: write  # for trusted publishing
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: vibe-profiler-wheel
-          path: dist/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: vibe-profiler-sdist
-          path: dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
