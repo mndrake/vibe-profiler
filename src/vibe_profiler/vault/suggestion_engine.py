@@ -97,7 +97,7 @@ class VaultSuggestionEngine:
         for members in groups.values():
             base_name = normalize_name(members[0][1]).removesuffix("_id").removesuffix("_key")
             hub_name = f"{self.cfg.hub_prefix}{base_name}"
-            bk_columns_tuple = tuple(col for _, col in members)
+            bk_columns_tuple = tuple(dict.fromkeys(col for _, col in members))
             source_tables = tuple(sorted({tbl for tbl, _ in members}))
             hash_key = f"{base_name}{self.cfg.hash_key_suffix}"
 
