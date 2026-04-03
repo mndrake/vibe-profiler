@@ -173,20 +173,51 @@ class VibeProfilerPipeline:
             stage="analysis", total=4, callback=self.progress_callback
         )
 
-        # Business keys — per-table, can reuse cached
-        tracker.update(1, "business_keys", "Detecting business keys")
+        # Business keys + historization — per-table, can reuse cached, parallelizable
+        tracker.update(1, "business_keys", "Detecting business keys and historization")
         bk_analyzer = BusinessKeyAnalyzer(config=self.config.analysis)
+        hist_analyzer = HistorizationAnalyzer()
         business_keys: dict = {}
-        for tp in pr.tables:
+        historization: dict = {}
+
+        def _analyze_table(tp):
+            """Run BK + historization for a single table."""
             if (
                 tables_to_refresh is not None
                 and prev is not None
                 and tp.table_name not in tables_to_refresh
-                and tp.table_name in prev.business_keys
             ):
-                business_keys[tp.table_name] = prev.business_keys[tp.table_name]
+                bk = prev.business_keys.get(tp.table_name, ())
+                hist = prev.historization.get(tp.table_name)
             else:
-                business_keys[tp.table_name] = bk_analyzer.analyze(tp)
+                bk = bk_analyzer.analyze(tp)
+                hist = None
+
+            if hist is None:
+                hist = hist_analyzer.analyze(
+                    tp, self.tables[tp.table_name], bk
+                )
+            return tp.table_name, bk, hist
+
+        max_workers = self.config.profiling.max_parallel_tables
+        tables_to_analyze = list(pr.tables)
+
+        if max_workers > 1 and len(tables_to_analyze) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(
+                max_workers=min(max_workers, len(tables_to_analyze))
+            ) as pool:
+                futures = [pool.submit(_analyze_table, tp) for tp in tables_to_analyze]
+                for future in as_completed(futures):
+                    name, bk, hist = future.result()
+                    business_keys[name] = bk
+                    historization[name] = hist
+        else:
+            for tp in tables_to_analyze:
+                name, bk, hist = _analyze_table(tp)
+                business_keys[name] = bk
+                historization[name] = hist
 
         # Cross-table similarity — incremental: only new pairs
         n_changed = len(tables_to_refresh) if tables_to_refresh else len(self.tables)
@@ -204,7 +235,7 @@ class VibeProfilerPipeline:
 
         # Relationships — incremental: only new pairs
         tracker.update(3, "relationships", "Detecting FK relationships")
-        rel_analyzer = RelationshipAnalyzer(self.spark)
+        rel_analyzer = RelationshipAnalyzer(self.spark, config=self.config.analysis)
         relationships = rel_analyzer.analyze(
             pr,
             business_keys,
@@ -213,24 +244,6 @@ class VibeProfilerPipeline:
             changed_tables=tables_to_refresh,
             previous_relationships=prev.relationships if prev else (),
         )
-
-        # Historization — per-table, can reuse cached
-        tracker.update(4, "historization", "Detecting historization patterns")
-        hist_analyzer = HistorizationAnalyzer()
-        historization: dict = {}
-        for tp in pr.tables:
-            if (
-                tables_to_refresh is not None
-                and prev is not None
-                and tp.table_name not in tables_to_refresh
-                and tp.table_name in prev.historization
-            ):
-                historization[tp.table_name] = prev.historization[tp.table_name]
-            else:
-                historization[tp.table_name] = hist_analyzer.analyze(
-                    tp, self.tables[tp.table_name],
-                    business_keys.get(tp.table_name, ()),
-                )
 
         tracker.complete("Analysis complete")
 

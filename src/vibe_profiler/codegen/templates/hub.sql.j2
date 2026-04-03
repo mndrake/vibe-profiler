@@ -11,13 +11,23 @@
 {%- endset %}
 {%- set src_ldts_str -%}"{{ load_date_column }}"{%- endset %}
 {%- set src_source_str -%}"{{ record_source_column }}"{%- endset %}
-{%- set source_model_str -%}"{{ staging_model }}"{%- endset %}
+{%- set source_model_val -%}
+{% if staging_models | length == 1 -%}
+"{{ staging_models[0] }}"
+{%- else -%}
+[
+{%- for sm in staging_models -%}
+"{{ sm }}"{{ ", " if not loop.last }}
+{%- endfor -%}
+]
+{%- endif %}
+{%- endset %}
 
 {{ '{%' }} set src_pk = {{ src_pk_str }} {{ '%}' }}
 {{ '{%' }} set src_nk = {{ src_nk_list }} {{ '%}' }}
 {{ '{%' }} set src_ldts = {{ src_ldts_str }} {{ '%}' }}
 {{ '{%' }} set src_source = {{ src_source_str }} {{ '%}' }}
-{{ '{%' }} set source_model = {{ source_model_str }} {{ '%}' }}
+{{ '{%' }} set source_model = {{ source_model_val }} {{ '%}' }}
 
 {{ '{{' }} automate_dv.hub(src_pk=src_pk,
               src_nk=src_nk,

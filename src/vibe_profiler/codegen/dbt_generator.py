@@ -252,6 +252,9 @@ class DbtGenerator:
     # ------------------------------------------------------------------
 
     def _generate_hub(self, hub: HubSpec) -> None:
+        staging_models = [
+            f"stg_{normalize_name(src)}" for src in hub.source_tables
+        ]
         tpl = self._env.get_template("hub.sql.j2")
         content = tpl.render(
             materialized=self.cfg.model_config.get("materialized", "incremental"),
@@ -260,7 +263,7 @@ class DbtGenerator:
             business_keys=list(hub.business_key_columns),
             load_date_column=self.cfg.load_date_column,
             record_source_column=self.cfg.record_source_column,
-            staging_model=f"stg_{normalize_name(hub.source_tables[0])}",
+            staging_models=staging_models,
         )
         path = f"models/raw_vault/hubs/{hub.hub_name}.sql"
         self._files[path] = content
@@ -277,6 +280,9 @@ class DbtGenerator:
             if hub:
                 fk_hash_keys.append(hub.hash_key_name)
 
+        staging_models = [
+            f"stg_{normalize_name(src)}" for src in link.source_tables
+        ]
         tpl = self._env.get_template("link.sql.j2")
         content = tpl.render(
             materialized=self.cfg.model_config.get("materialized", "incremental"),
@@ -285,7 +291,7 @@ class DbtGenerator:
             foreign_keys=fk_hash_keys,
             load_date_column=self.cfg.load_date_column,
             record_source_column=self.cfg.record_source_column,
-            staging_model=f"stg_{normalize_name(link.source_tables[0])}",
+            staging_models=staging_models,
         )
         path = f"models/raw_vault/links/{link.link_name}.sql"
         self._files[path] = content

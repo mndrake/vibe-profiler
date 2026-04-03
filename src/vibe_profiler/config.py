@@ -22,6 +22,7 @@ class ProfilingConfig:
     approx_distinct: bool = True
     column_batch_size: int = 50
     auto_tune: bool = True
+    max_parallel_tables: int = 4  # 0 or 1 = sequential
 
     # Tracks which fields the user explicitly set (so auto-tune can skip them).
     _user_set_fields: frozenset[str] = field(
@@ -50,8 +51,11 @@ class AnalysisConfig:
     name_similarity_weight: float = 0.25
     stat_similarity_weight: float = 0.25
     value_overlap_weight: float = 0.50
-    min_composite_score: float = 0.60
+    min_composite_score: float = 0.45
     value_sample_size: int = 10_000
+
+    # Relationship / FK detection
+    containment_threshold: float = 0.40
 
 
 @dataclass

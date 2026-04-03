@@ -145,7 +145,13 @@ class ProfileEngine:
         self,
         tables: dict[str, DataFrame],
     ) -> ProfileResult:
-        """Profile multiple tables and return an aggregated ``ProfileResult``."""
+        """Profile multiple tables and return an aggregated ``ProfileResult``.
+
+        When ``max_parallel_tables > 1``, profiles tables concurrently using
+        a thread pool.  Spark handles concurrent jobs from different threads.
+        """
+        max_workers = self.config.max_parallel_tables
+
         tracker = ProgressTracker(
             stage="profiling",
             total=len(tables),
@@ -153,15 +159,42 @@ class ProfileEngine:
         )
 
         profiles: list[TableProfile] = []
-        for idx, (name, df) in enumerate(tables.items(), 1):
-            tracker.update(
-                idx,
-                step=f"table:{name}",
-                message=f"Profiling table {idx}/{len(tables)}: {name} ({len(df.columns)} columns)",
-            )
-            profiles.append(
-                self.profile_table(df, table_name=name, _tracker=tracker, _table_index=idx)
-            )
+
+        if max_workers > 1 and len(tables) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            completed = 0
+            with ThreadPoolExecutor(max_workers=min(max_workers, len(tables))) as pool:
+                futures = {
+                    pool.submit(self.profile_table, df, name): name
+                    for name, df in tables.items()
+                }
+                for future in as_completed(futures):
+                    completed += 1
+                    name = futures[future]
+                    tp = future.result()
+                    profiles.append(tp)
+                    tracker.update(
+                        completed,
+                        step=f"table:{name}",
+                        message=(
+                            f"Profiled table {completed}/{len(tables)}: "
+                            f"{name} ({len(tp.column_profiles)} columns)"
+                        ),
+                    )
+        else:
+            for idx, (name, df) in enumerate(tables.items(), 1):
+                tracker.update(
+                    idx,
+                    step=f"table:{name}",
+                    message=(
+                        f"Profiling table {idx}/{len(tables)}: "
+                        f"{name} ({len(df.columns)} columns)"
+                    ),
+                )
+                profiles.append(
+                    self.profile_table(df, table_name=name, _tracker=tracker, _table_index=idx)
+                )
 
         tracker.complete(f"Profiled {len(tables)} tables")
 
