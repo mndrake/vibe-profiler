@@ -278,6 +278,31 @@ class VibeProfilerPipeline:
         return self.run_codegen()
 
     # ------------------------------------------------------------------
+    # Reporting
+    # ------------------------------------------------------------------
+
+    def report(self, format: str = "text") -> str:
+        """Generate a findings report from available pipeline results.
+
+        Args:
+            format: ``"text"`` for plain text, ``"html"`` for Databricks
+                ``displayHTML()`` compatible output.
+
+        Can be called at any point — includes whichever stages have been run.
+        """
+        from vibe_profiler.report import ReportGenerator
+
+        gen = ReportGenerator(
+            profile_result=self._profile_result,
+            analysis_result=self._analysis_result,
+            vault_spec=self._vault_spec,
+            generated_files=self._generated_files,
+        )
+        if format == "html":
+            return gen.to_html()
+        return gen.to_text()
+
+    # ------------------------------------------------------------------
     # Interactive overrides
     # ------------------------------------------------------------------
 
