@@ -181,7 +181,7 @@ class VibeProfilerPipeline:
         historization: dict = {}
 
         def _analyze_table(tp):
-            """Run BK + historization for a single table."""
+            """Run temporal detection, BK scoring, and historization for a table."""
             if (
                 tables_to_refresh is not None
                 and prev is not None
@@ -189,14 +189,24 @@ class VibeProfilerPipeline:
             ):
                 bk = prev.business_keys.get(tp.table_name, ())
                 hist = prev.historization.get(tp.table_name)
-            else:
-                bk = bk_analyzer.analyze(tp)
-                hist = None
+                return tp.table_name, bk, hist
 
-            if hist is None:
-                hist = hist_analyzer.analyze(
-                    tp, self.tables[tp.table_name], bk
-                )
+            table_df = self.tables[tp.table_name]
+
+            # Detect temporal columns first (needed for SCD2-aware BK scoring)
+            from vibe_profiler.profiler.temporal_detector import detect_temporal_columns
+            temporal_cols = detect_temporal_columns(
+                table_df, tp.table_name, column_profiles=tp.column_profiles
+            )
+
+            # Score BK candidates with SCD2 dedup awareness
+            bk = bk_analyzer.analyze(
+                tp, df=table_df, temporal_columns=temporal_cols
+            )
+
+            # Full historization analysis
+            hist = hist_analyzer.analyze(tp, table_df, bk)
+
             return tp.table_name, bk, hist
 
         max_workers = self.config.profiling.max_parallel_tables
