@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import pytest
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import (
     DateType,
     IntegerType,
@@ -13,14 +15,12 @@ from pyspark.sql.types import (
     StructType,
     TimestampType,
 )
-from datetime import datetime
 
 
 @pytest.fixture(scope="session")
 def spark() -> SparkSession:
     return (
-        SparkSession.builder
-        .master("local[2]")
+        SparkSession.builder.master("local[2]")
         .appName("vibe-profiler-tests")
         .config("spark.sql.shuffle.partitions", "2")
         .config("spark.ui.enabled", "false")
@@ -29,7 +29,7 @@ def spark() -> SparkSession:
     )
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def customers_df(spark: SparkSession) -> DataFrame:
     schema = StructType([
         StructField("customer_id", StringType()),
@@ -49,7 +49,7 @@ def customers_df(spark: SparkSession) -> DataFrame:
     return spark.createDataFrame(data, schema)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def orders_df(spark: SparkSession) -> DataFrame:
     schema = StructType([
         StructField("order_id", StringType()),
@@ -59,8 +59,6 @@ def orders_df(spark: SparkSession) -> DataFrame:
         StructField("total_amount", LongType()),
         StructField("order_date", DateType()),
     ])
-    from datetime import date
-
     data = [
         ("ORD-001", "C001", "PROD-A", 2, 100, date(2023, 2, 1)),
         ("ORD-002", "C001", "PROD-B", 1, 50, date(2023, 2, 2)),
@@ -72,7 +70,7 @@ def orders_df(spark: SparkSession) -> DataFrame:
     return spark.createDataFrame(data, schema)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def orders_history_df(spark: SparkSession) -> DataFrame:
     """Orders with SCD Type 2 versioning."""
     schema = StructType([
@@ -93,6 +91,6 @@ def orders_history_df(spark: SparkSession) -> DataFrame:
     return spark.createDataFrame(data, schema)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def sample_tables(customers_df, orders_df) -> dict[str, DataFrame]:
     return {"customers": customers_df, "orders": orders_df}
