@@ -98,5 +98,6 @@ def default_progress_callback(event: ProgressEvent) -> None:
 
     print(
         f"[{event.stage}] {event.current}/{event.total} ({pct:.0f}%) "
-        f"{event.message} [{event.elapsed_seconds:.1f}s elapsed{eta_str}]"
+        f"{event.message} [{event.elapsed_seconds:.1f}s elapsed{eta_str}]",
+        flush=True,
     )

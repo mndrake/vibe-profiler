@@ -44,11 +44,17 @@ class VibeProfilerPipeline:
         config: PipelineConfig | None = None,
         dbt_config: DbtConfig | None = None,
         progress_callback: ProgressCallback | None = None,
+        verbose: bool = False,
     ) -> None:
         self.spark = spark
         self.tables = tables
         self.config = config or PipelineConfig()
         self.dbt_config = dbt_config or DbtConfig()
+
+        if verbose and progress_callback is None:
+            from vibe_profiler.progress import default_progress_callback
+
+            progress_callback = default_progress_callback
         self.progress_callback = progress_callback
 
         # Intermediate results (populated as stages run)
@@ -66,10 +72,15 @@ class VibeProfilerPipeline:
     ) -> ProfileResult:
         """Stage 1: Profile tables.
 
+        When cached results exist (via :meth:`load_results`), automatically
+        detects new tables and only profiles those.  You can also force
+        specific tables to be re-profiled via *tables_to_refresh*.
+
         Args:
-            tables_to_refresh: If provided, only these tables are re-profiled;
-                cached profiles for other tables are preserved.  Pass ``None``
-                (the default) to profile everything.
+            tables_to_refresh: Explicit set of tables to (re-)profile.  If
+                ``None`` and cached results exist, automatically profiles
+                tables not present in the cache.  If ``None`` and no cache
+                exists, profiles everything.
 
         When ``auto_tune`` is enabled, a lightweight pre-scan adjusts the
         analysis config (e.g. ``value_sample_size``) based on table sizes.
@@ -95,16 +106,24 @@ class VibeProfilerPipeline:
             progress_callback=self.progress_callback,
         )
 
-        if tables_to_refresh is not None and self._profile_result is not None:
-            # Incremental: only profile the requested tables
+        # Auto-detect which tables need profiling
+        if self._profile_result is not None:
+            cached_names = {tp.table_name for tp in self._profile_result.tables}
+            current_names = set(self.tables.keys())
+
+            if tables_to_refresh is None:
+                # Auto: profile tables not already in cache
+                tables_to_refresh = current_names - cached_names
+
+            # Always include explicitly requested refreshes
             subset = {k: v for k, v in self.tables.items() if k in tables_to_refresh}
             if subset:
                 new_profiles = engine.profile_tables(subset)
                 self._profile_result = self._merge_profiles(
                     self._profile_result, new_profiles
                 )
-            # Also drop cached profiles for tables no longer in self.tables
-            current_names = set(self.tables.keys())
+
+            # Drop cached profiles for tables no longer in self.tables
             self._profile_result = ProfileResult(
                 tables=tuple(
                     tp for tp in self._profile_result.tables
@@ -124,19 +143,30 @@ class VibeProfilerPipeline:
     ) -> AnalysisResult:
         """Stage 2: Analyze profiles for BKs, similarity, relationships, historization.
 
+        When cached analysis results exist, automatically detects which tables
+        are new or changed and only re-analyzes those.  You can also force
+        specific tables via *tables_to_refresh*.
+
         Args:
-            tables_to_refresh: If provided, only re-analyze these tables.
-                Per-table results (BK, historization) for unchanged tables are
-                reused from the cached ``_analysis_result``.  Cross-table
-                analysis (similarity, relationships) only compares pairs
-                involving at least one changed table, carrying forward cached
-                results for unchanged pairs.
+            tables_to_refresh: Explicit set of tables to re-analyze.  If
+                ``None`` and cached results exist, auto-detects new/changed
+                tables by comparing current table set with cached analysis.
+                If ``None`` and no cache exists, analyzes everything.
         """
         pr = profile_result or self._profile_result
         if pr is None:
             pr = self.run_profiling()
 
         prev = self._analysis_result
+
+        # Auto-detect which tables need analysis
+        if tables_to_refresh is None and prev is not None:
+            cached_tables = set(prev.business_keys.keys())
+            current_tables = {tp.table_name for tp in pr.tables}
+            tables_to_refresh = current_tables - cached_tables
+            # If no new tables at all, still run full analysis
+            if not tables_to_refresh:
+                tables_to_refresh = None
 
         # 4 analysis sub-steps
         tracker = ProgressTracker(
