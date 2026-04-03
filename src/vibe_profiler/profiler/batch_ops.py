@@ -83,6 +83,28 @@ def batch_detect_patterns(
     return results
 
 
+def _try_cache(df: DataFrame) -> tuple[DataFrame, bool]:
+    """Attempt to cache a DataFrame; return (df, was_cached).
+
+    Databricks serverless does not support PERSIST TABLE, so we fall
+    back to the uncached DataFrame if caching fails.
+    """
+    try:
+        cached = df.cache()
+        cached.count()  # materialize the cache
+        return cached, True
+    except Exception:
+        return df, False
+
+
+def _try_unpersist(df: DataFrame, was_cached: bool) -> None:
+    if was_cached:
+        try:
+            df.unpersist()
+        except Exception:
+            pass
+
+
 def batch_top_values(
     df: DataFrame,
     columns: list[str],
@@ -90,18 +112,17 @@ def batch_top_values(
 ) -> dict[str, tuple[tuple[str, int], ...]]:
     """Compute top-N values for multiple columns.
 
-    Uses one Spark job per column but caches the DataFrame first to avoid
-    re-scanning.  For truly batched single-pass, we'd need unpivot which
-    adds complexity — this is a pragmatic middle ground.
+    Attempts to cache the DataFrame to avoid re-scanning per column.
+    Falls back gracefully on serverless compute where caching is unsupported.
     """
-    df_cached = df.cache()
+    df_work, was_cached = _try_cache(df)
     results: dict[str, tuple[tuple[str, int], ...]] = {}
 
     try:
         for col_name in columns:
             c = F.col(f"`{col_name}`")
             rows = (
-                df_cached.filter(c.isNotNull())
+                df_work.filter(c.isNotNull())
                 .groupBy(c.cast("string").alias("_val"))
                 .agg(F.count("*").alias("_cnt"))
                 .orderBy(F.desc("_cnt"))
@@ -110,7 +131,7 @@ def batch_top_values(
             )
             results[col_name] = tuple((r["_val"], r["_cnt"]) for r in rows)
     finally:
-        df_cached.unpersist()
+        _try_unpersist(df_work, was_cached)
 
     return results
 
@@ -134,7 +155,7 @@ def batch_infer_types(
         return {}
 
     sample = df.limit(sample_limit)
-    sample_cached = sample.cache()
+    sample_work, was_cached = _try_cache(sample)
 
     try:
         results: dict[str, InferredType | None] = {}
@@ -144,7 +165,7 @@ def batch_infer_types(
         for col_name in string_columns:
             c = F.col(f"`{col_name}`").cast("string")
             rows = (
-                sample_cached.select(c.alias("v"))
+                sample_work.select(c.alias("v"))
                 .filter(F.col("v").isNotNull())
                 .filter(F.trim(F.col("v")) != "")
                 .limit(5)
@@ -186,7 +207,7 @@ def batch_infer_types(
                 ).alias(f"{col_name}__dec")
             )
 
-        row = sample_cached.agg(*agg_exprs).collect()[0]
+        row = sample_work.agg(*agg_exprs).collect()[0]
 
         # Process results and identify which columns still need temporal checking
         needs_temporal: list[str] = []
@@ -225,7 +246,7 @@ def batch_infer_types(
         # --- Step 2: Test timestamp formats (1 job per format, all columns) ---
         if needs_temporal:
             _batch_temporal_check(
-                sample_cached, needs_temporal, _TIMESTAMP_FORMATS, "timestamp",
+                sample_work, needs_temporal, _TIMESTAMP_FORMATS, "timestamp",
                 row, examples, results,
             )
 
@@ -233,7 +254,7 @@ def batch_infer_types(
         still_unresolved = [c for c in needs_temporal if c not in results]
         if still_unresolved:
             _batch_temporal_check(
-                sample_cached, still_unresolved, _DATE_FORMATS, "date",
+                sample_work, still_unresolved, _DATE_FORMATS, "date",
                 row, examples, results,
             )
 
@@ -244,7 +265,7 @@ def batch_infer_types(
 
         return results
     finally:
-        sample_cached.unpersist()
+        _try_unpersist(sample_work, was_cached)
 
 
 def _batch_temporal_check(
