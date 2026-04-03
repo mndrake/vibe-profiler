@@ -98,7 +98,7 @@ def compute_basic_stats(
             null_count = row[f"{col_name}__nulls"] or 0
             distinct_count = row[f"{col_name}__distinct"] or 0
             non_null = total_count - null_count
-            uniqueness = distinct_count / non_null if non_null > 0 else 0.0
+            uniqueness = min(distinct_count / non_null, 1.0) if non_null > 0 else 0.0
 
             stats: dict = {
                 "spark_type": str(field.dataType),
