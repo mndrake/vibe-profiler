@@ -9,8 +9,35 @@ from pyspark.sql import functions as F
 
 from vibe_profiler.config import AnalysisConfig
 from vibe_profiler.models.analysis import SimilarityMatch
-from vibe_profiler.models.profile import ColumnProfile, ProfileResult
+from vibe_profiler.models.profile import ColumnProfile, PatternType, ProfileResult
 from vibe_profiler.utils import levenshtein_ratio, name_tokens, jaccard_similarity, normalize_name
+
+
+# Minimum distinct values for a column to be worth comparing.
+# Columns with fewer than this (flags, booleans, status codes with <5 values)
+# are skipped — they match too broadly to be useful.
+_MIN_DISTINCT_COUNT = 5
+
+# Patterns that are never keys or FKs
+_SKIP_PATTERNS = {PatternType.FREE_TEXT, PatternType.BOOLEAN}
+
+
+def _skip_column(cp: ColumnProfile) -> bool:
+    """Return True if this column should be excluded from cross-table comparison.
+
+    Skips columns that are unlikely to be keys or FK references:
+    - Free text (descriptions, comments) — too noisy
+    - Booleans — only 2 values, matches are meaningless
+    - Very few distinct values (<5) — status flags, constants
+    - Very high null rate (>80%) — sparse, unreliable for matching
+    """
+    if cp.dominant_pattern in _SKIP_PATTERNS:
+        return True
+    if cp.distinct_count < _MIN_DISTINCT_COUNT:
+        return True
+    if cp.null_rate > 0.80:
+        return True
+    return False
 
 
 class CrossTableSimilarity:
@@ -40,10 +67,13 @@ class CrossTableSimilarity:
             previous_matches: Cached matches from a prior run.  Matches between
                 unchanged tables are carried forward without recomputation.
         """
-        # Build a flat list of (table_name, ColumnProfile) for cross-table pairs
+        # Build a flat list of (table_name, ColumnProfile) for cross-table pairs,
+        # excluding columns that are unlikely to be keys or FK references.
         all_columns: list[tuple[str, ColumnProfile]] = []
         for tp in profile_result.tables:
             for cp in tp.column_profiles:
+                if _skip_column(cp):
+                    continue
                 all_columns.append((tp.table_name, cp))
 
         # Carry forward previous matches between unchanged tables
