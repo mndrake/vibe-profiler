@@ -101,6 +101,30 @@ class TestInferTimestamp:
         assert result is not None
         assert result.spark_target_type == "timestamp"
 
+    def test_db2_dot_separator_format(self, spark):
+        data = [
+            ("2024-01-15-10.30.45.123456",),
+            ("2024-02-20-14.45.30.654321",),
+            ("2024-03-10-08.00.00.000000",),
+        ]
+        df = spark.createDataFrame(data, ["val"])
+        result = infer_column_type(df, "val")
+        assert result is not None
+        assert result.spark_target_type == "timestamp"
+        assert result.format_string == "yyyy-MM-dd-HH.mm.ss.SSSSSS"
+
+    def test_microsecond_precision(self, spark):
+        data = [
+            ("2024-01-15 10:30:45.123456",),
+            ("2024-02-20 14:45:30.654321",),
+            ("2024-03-10 08:00:00.000001",),
+        ]
+        df = spark.createDataFrame(data, ["val"])
+        result = infer_column_type(df, "val")
+        assert result is not None
+        assert result.spark_target_type == "timestamp"
+        assert "SSSSSS" in result.format_string
+
 
 class TestInferNoType:
     def test_free_text_stays_string(self, spark):

@@ -19,18 +19,27 @@ from vibe_profiler.models.profile import InferredType
 _TIMESTAMP_FORMATS: list[str] = [
     "yyyy-MM-dd HH:mm:ss",
     "yyyy-MM-dd HH:mm:ss.SSS",
+    "yyyy-MM-dd HH:mm:ss.SSSSSS",
+    "yyyy-MM-dd-HH.mm.ss.SSSSSS",
+    "yyyy-MM-dd-HH.mm.ss.SSS",
+    "yyyy-MM-dd-HH.mm.ss",
     "yyyy-MM-dd'T'HH:mm:ss",
     "yyyy-MM-dd'T'HH:mm:ss.SSS",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
     "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
     "yyyy-MM-dd'T'HH:mm:ssZ",
     "MM/dd/yyyy HH:mm:ss",
+    "MM/dd/yyyy HH:mm:ss.SSS",
     "dd/MM/yyyy HH:mm:ss",
+    "dd/MM/yyyy HH:mm:ss.SSS",
     "MM-dd-yyyy HH:mm:ss",
     "dd-MM-yyyy HH:mm:ss",
     "yyyyMMddHHmmss",
     "yyyy/MM/dd HH:mm:ss",
     "dd-MMM-yyyy HH:mm:ss",
     "MMM dd, yyyy HH:mm:ss",
+    "dd.MM.yyyy HH:mm:ss",
+    "yyyy.MM.dd HH:mm:ss",
 ]
 
 _DATE_FORMATS: list[str] = [
