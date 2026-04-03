@@ -12,12 +12,10 @@ from vibe_profiler.models.profile import ColumnProfile, PatternType, ProfileResu
 from vibe_profiler.profiler.column_stats import (
     compute_approx_quantiles,
     compute_basic_stats,
-    compute_top_values,
 )
 from vibe_profiler.profiler.auto_config import auto_tune_config, collect_table_metrics
-from vibe_profiler.profiler.pattern_detector import detect_pattern
+from vibe_profiler.profiler.batch_ops import batch_detect_patterns, batch_infer_types, batch_top_values
 from vibe_profiler.profiler.sampling import auto_sample
-from vibe_profiler.profiler.type_inference import infer_column_type
 from vibe_profiler.progress import ProgressCallback, ProgressTracker
 
 
@@ -65,46 +63,66 @@ class ProfileEngine:
 
         fields = [f for f in df.schema.fields if f.name in basic]
         total_cols = len(fields)
+        all_col_names = [f.name for f in fields]
+        string_cols = [
+            f.name for f in fields if basic.get(f.name, {}).get("mean_length") is not None
+        ]
+        numeric_cols = [
+            f.name for f in fields if basic.get(f.name, {}).get("is_numeric")
+        ]
+
+        # --- Batched operations (few Spark jobs instead of N per column) ---
+        if self.progress_callback:
+            ProgressTracker(
+                stage="profiling", total=4, callback=self.progress_callback
+            ).update(1, "batch:patterns",
+                     f"Table '{table_name}' — detecting patterns ({len(string_cols)} string cols)")
+
+        # 1. Pattern detection: 1 aggregation for all string columns
+        patterns = batch_detect_patterns(sampled_df, string_cols)
+
+        if self.progress_callback:
+            ProgressTracker(
+                stage="profiling", total=4, callback=self.progress_callback
+            ).update(2, "batch:types",
+                     f"Table '{table_name}' — inferring types ({len(string_cols)} string cols)")
+
+        # 2. Type inference: 1 job for bool/int/dec + 1 per timestamp format
+        inferred_types = batch_infer_types(sampled_df, string_cols)
+
+        if self.progress_callback:
+            ProgressTracker(
+                stage="profiling", total=4, callback=self.progress_callback
+            ).update(3, "batch:top_values",
+                     f"Table '{table_name}' — computing top values ({total_cols} cols)")
+
+        # 3. Top values: cached scan, 1 job per column but on cached data
+        top_values = batch_top_values(
+            sampled_df, all_col_names, n=table_config.max_top_values
+        )
+
+        if self.progress_callback:
+            ProgressTracker(
+                stage="profiling", total=4, callback=self.progress_callback
+            ).update(4, "batch:quantiles",
+                     f"Table '{table_name}' — computing quantiles ({len(numeric_cols)} numeric cols)")
+
+        # 4. Quantiles: still per-column (Spark API limitation)
+        quantiles_map: dict[str, tuple[float, ...] | None] = {}
+        for col_name in numeric_cols:
+            quantiles_map[col_name] = compute_approx_quantiles(
+                sampled_df, col_name, error=table_config.approx_quantile_error
+            )
+
+        # --- Assemble column profiles ---
         col_profiles: list[ColumnProfile] = []
-
-        # Column-level progress tracker (nested inside the table-level one)
-        col_tracker = ProgressTracker(
-            stage="profiling",
-            total=total_cols,
-            callback=self.progress_callback,
-        ) if self.progress_callback else None
-
-        for col_idx, field in enumerate(fields, 1):
+        for field in fields:
             col_name = field.name
             stats = basic.get(col_name)
             if stats is None:
                 continue
 
-            if col_tracker:
-                col_tracker.update(
-                    col_idx,
-                    step=f"column:{col_name}",
-                    message=f"Table '{table_name}' — column {col_idx}/{total_cols}: {col_name}",
-                )
-
-            # Pattern detection (string columns only)
-            if stats.get("mean_length") is not None:
-                pattern, coverage = detect_pattern(sampled_df, col_name)
-            else:
-                pattern, coverage = PatternType.UNKNOWN, 0.0
-
-            top_vals = compute_top_values(
-                sampled_df, col_name, n=table_config.max_top_values
-            )
-
-            quantiles = compute_approx_quantiles(
-                sampled_df, col_name, error=table_config.approx_quantile_error
-            )
-
-            # Type inference for string columns — detect hidden dates, numbers, etc.
-            inferred = None
-            if stats.get("mean_length") is not None:  # string column
-                inferred = infer_column_type(sampled_df, col_name)
+            pattern, coverage = patterns.get(col_name, (PatternType.UNKNOWN, 0.0))
 
             col_profiles.append(
                 ColumnProfile(
@@ -122,10 +140,10 @@ class ProfileEngine:
                     max_length=stats["max_length"],
                     dominant_pattern=pattern,
                     pattern_coverage=coverage,
-                    top_values=top_vals,
+                    top_values=top_values.get(col_name, ()),
                     is_numeric=stats["is_numeric"],
-                    approx_quantiles=quantiles,
-                    inferred_type=inferred,
+                    approx_quantiles=quantiles_map.get(col_name),
+                    inferred_type=inferred_types.get(col_name),
                 )
             )
 
