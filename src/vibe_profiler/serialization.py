@@ -13,7 +13,13 @@ from vibe_profiler.models.analysis import (
     Relationship,
     SimilarityMatch,
 )
-from vibe_profiler.models.profile import ColumnProfile, PatternType, ProfileResult, TableProfile
+from vibe_profiler.models.profile import (
+    ColumnProfile,
+    InferredType,
+    PatternType,
+    ProfileResult,
+    TableProfile,
+)
 from vibe_profiler.models.temporal import HistorizationInfo, SCDType, TemporalColumn
 
 
@@ -81,7 +87,28 @@ def _column_profile_to_dict(cp: ColumnProfile) -> dict:
         "top_values": [list(pair) for pair in cp.top_values],
         "is_numeric": cp.is_numeric,
         "approx_quantiles": list(cp.approx_quantiles) if cp.approx_quantiles else None,
+        "inferred_type": _inferred_type_to_dict(cp.inferred_type) if cp.inferred_type else None,
     }
+
+
+def _inferred_type_to_dict(it: InferredType) -> dict:
+    return {
+        "spark_target_type": it.spark_target_type,
+        "format_string": it.format_string,
+        "confidence": it.confidence,
+        "sample_values": list(it.sample_values),
+    }
+
+
+def _inferred_type_from_dict(d: dict | None) -> InferredType | None:
+    if d is None:
+        return None
+    return InferredType(
+        spark_target_type=d["spark_target_type"],
+        format_string=d.get("format_string"),
+        confidence=d["confidence"],
+        sample_values=tuple(d["sample_values"]),
+    )
 
 
 def _column_profile_from_dict(d: dict) -> ColumnProfile:
@@ -105,6 +132,7 @@ def _column_profile_from_dict(d: dict) -> ColumnProfile:
         top_values=top_values,
         is_numeric=d["is_numeric"],
         approx_quantiles=quantiles,
+        inferred_type=_inferred_type_from_dict(d.get("inferred_type")),
     )
 
 

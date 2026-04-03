@@ -266,7 +266,9 @@ class VibeProfilerPipeline:
         if vs is None:
             vs = self.run_suggestion()
 
-        gen = DbtGenerator(vs, dbt_config=self.dbt_config)
+        gen = DbtGenerator(
+            vs, dbt_config=self.dbt_config, profile_result=self._profile_result
+        )
         self._generated_files = gen.generate_all()
         return self._generated_files
 

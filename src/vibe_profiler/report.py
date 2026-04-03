@@ -92,14 +92,24 @@ class ReportGenerator:
             lines.append("")
             lines.append(f"  {tp.table_name} columns:")
             lines.append(
-                f"    {'Column':<25} {'Type':<12} {'Unique':>7}  {'Null%':>6}  Pattern"
+                f"    {'Column':<25} {'Type':<12} {'Unique':>7}  {'Null%':>6}  "
+                f"{'Pattern':<18} Inferred"
             )
-            lines.append(f"    {'-'*25} {'-'*12} {'-'*7}  {'-'*6}  -------")
+            lines.append(
+                f"    {'-'*25} {'-'*12} {'-'*7}  {'-'*6}  "
+                f"{'-'*18} --------"
+            )
             for cp in tp.column_profiles:
+                inferred = ""
+                if cp.inferred_type:
+                    it = cp.inferred_type
+                    inferred = it.spark_target_type
+                    if it.format_string:
+                        inferred += f" ({it.format_string})"
                 lines.append(
                     f"    {cp.column_name:<25} {cp.spark_type:<12} "
                     f"{cp.uniqueness:>6.0%}  {cp.null_rate:>5.1%}  "
-                    f"{cp.dominant_pattern.value}"
+                    f"{cp.dominant_pattern.value:<18} {inferred}"
                 )
         return lines
 
@@ -222,6 +232,7 @@ class ReportGenerator:
         lines: list[str] = []
 
         categories: dict[str, list[str]] = {
+            "Pre-stage": [],
             "Staging": [],
             "Hubs": [],
             "Links": [],
@@ -230,7 +241,9 @@ class ReportGenerator:
         }
         for path in sorted(self.files.keys()):
             name = path.rsplit("/", 1)[-1]
-            if "staging/" in path and name.endswith(".sql"):
+            if name.startswith("pre_stg_") and name.endswith(".sql"):
+                categories["Pre-stage"].append(name)
+            elif "staging/" in path and name.endswith(".sql"):
                 categories["Staging"].append(name)
             elif "hubs/" in path:
                 categories["Hubs"].append(name)
@@ -297,18 +310,26 @@ class ReportGenerator:
         for tp in self.pr.tables:
             col_rows = []
             for cp in tp.column_profiles:
+                inferred = ""
+                if cp.inferred_type:
+                    it = cp.inferred_type
+                    inferred = f"<b>{it.spark_target_type}</b>"
+                    if it.format_string:
+                        inferred += f" <span style='color:#666'>({it.format_string})</span>"
                 col_rows.append(
                     f"<tr><td>{cp.column_name}</td><td>{cp.spark_type}</td>"
                     f"<td style='text-align:right'>{cp.uniqueness:.0%}</td>"
                     f"<td style='text-align:right'>{cp.null_rate:.1%}</td>"
-                    f"<td>{cp.dominant_pattern.value}</td></tr>"
+                    f"<td>{cp.dominant_pattern.value}</td>"
+                    f"<td>{inferred}</td></tr>"
                 )
             detail_sections.append(
                 f"<details><summary style='cursor:pointer; color:#2563eb; margin:8px 0;'>"
                 f"{tp.table_name} columns</summary>"
                 f"<table style='{self._table_style()}'>"
-                f"<tr style='background:#f1f5f9;'><th>Column</th><th>Type</th>"
-                f"<th>Uniqueness</th><th>Null %</th><th>Pattern</th></tr>"
+                f"<tr style='background:#f1f5f9;'><th>Column</th><th>Raw Type</th>"
+                f"<th>Uniqueness</th><th>Null %</th><th>Pattern</th>"
+                f"<th>Inferred Type</th></tr>"
                 f"{''.join(col_rows)}</table></details>"
             )
 
@@ -485,6 +506,7 @@ class ReportGenerator:
     def _html_generated_files(self) -> str:
         assert self.files is not None
         categories: dict[str, list[str]] = {
+            "Pre-stage": [],
             "Staging": [],
             "Hubs": [],
             "Links": [],
@@ -493,7 +515,9 @@ class ReportGenerator:
         }
         for path in sorted(self.files.keys()):
             name = path.rsplit("/", 1)[-1]
-            if "staging/" in path and name.endswith(".sql"):
+            if name.startswith("pre_stg_") and name.endswith(".sql"):
+                categories["Pre-stage"].append(name)
+            elif "staging/" in path and name.endswith(".sql"):
                 categories["Staging"].append(name)
             elif "hubs/" in path:
                 categories["Hubs"].append(name)

@@ -1,6 +1,12 @@
 """Metadata models shared across pipeline stages."""
 
-from vibe_profiler.models.profile import ColumnProfile, PatternType, ProfileResult, TableProfile
+from vibe_profiler.models.profile import (
+    ColumnProfile,
+    InferredType,
+    PatternType,
+    ProfileResult,
+    TableProfile,
+)
 from vibe_profiler.models.analysis import (
     AnalysisResult,
     BusinessKeyCandidate,
@@ -19,6 +25,7 @@ __all__ = [
     "AnalysisResult",
     "BusinessKeyCandidate",
     "ColumnProfile",
+    "InferredType",
     "DataVaultSpec",
     "HistorizationInfo",
     "HubSpec",

@@ -28,6 +28,7 @@ class DbtConfig:
     automate_dv_version: str = "0.10"
 
     # Output
+    generate_pre_stage: bool = True
     generate_staging: bool = True
     generate_sources_yml: bool = True
     generate_schema_yml: bool = True

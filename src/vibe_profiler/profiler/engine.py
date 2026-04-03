@@ -17,6 +17,7 @@ from vibe_profiler.profiler.column_stats import (
 from vibe_profiler.profiler.auto_config import auto_tune_config, collect_table_metrics
 from vibe_profiler.profiler.pattern_detector import detect_pattern
 from vibe_profiler.profiler.sampling import auto_sample
+from vibe_profiler.profiler.type_inference import infer_column_type
 from vibe_profiler.progress import ProgressCallback, ProgressTracker
 
 
@@ -100,6 +101,11 @@ class ProfileEngine:
                 sampled_df, col_name, error=table_config.approx_quantile_error
             )
 
+            # Type inference for string columns — detect hidden dates, numbers, etc.
+            inferred = None
+            if stats.get("mean_length") is not None:  # string column
+                inferred = infer_column_type(sampled_df, col_name)
+
             col_profiles.append(
                 ColumnProfile(
                     table_name=table_name,
@@ -119,6 +125,7 @@ class ProfileEngine:
                     top_values=top_vals,
                     is_numeric=stats["is_numeric"],
                     approx_quantiles=quantiles,
+                    inferred_type=inferred,
                 )
             )
 

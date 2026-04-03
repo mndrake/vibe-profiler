@@ -1,0 +1,12 @@
+{#- Pre-stage model: cast raw string columns to inferred types -#}
+{{ '{{' }} config(materialized='view') {{ '}}' }}
+
+SELECT
+{% for col in columns %}
+{% if col.cast_expr %}
+    {{ col.cast_expr }} AS {{ col.name }}{{ "," if not loop.last }}
+{% else %}
+    {{ col.name }}{{ "," if not loop.last }}
+{% endif %}
+{% endfor %}
+FROM {{ '{{' }} source('{{ source_name }}', '{{ source_table }}') {{ '}}' }}

@@ -20,6 +20,16 @@ class PatternType(Enum):
 
 
 @dataclass(frozen=True)
+class InferredType:
+    """Result of semantic type inference for a string column."""
+
+    spark_target_type: str  # "bigint", "double", "date", "timestamp", "boolean", "string"
+    format_string: Optional[str]  # e.g. "MM/dd/yyyy" for dates, None otherwise
+    confidence: float  # fraction of non-null values that parsed successfully
+    sample_values: tuple[str, ...]  # a few example raw values
+
+
+@dataclass(frozen=True)
 class ColumnProfile:
     table_name: str
     column_name: str
@@ -38,6 +48,7 @@ class ColumnProfile:
     top_values: tuple[tuple[str, int], ...]
     is_numeric: bool
     approx_quantiles: Optional[tuple[float, ...]]
+    inferred_type: Optional[InferredType] = None
 
 
 @dataclass(frozen=True)

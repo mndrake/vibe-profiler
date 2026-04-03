@@ -8,6 +8,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 from vibe_profiler.codegen.config import DbtConfig
+from vibe_profiler.models.profile import ProfileResult
 from vibe_profiler.models.vault_spec import DataVaultSpec, HubSpec, LinkSpec, SatelliteSpec
 from vibe_profiler.utils import normalize_name
 
@@ -35,9 +36,11 @@ class DbtGenerator:
         self,
         vault_spec: DataVaultSpec,
         dbt_config: DbtConfig | None = None,
+        profile_result: ProfileResult | None = None,
     ) -> None:
         self.spec = vault_spec
         self.cfg = dbt_config or DbtConfig()
+        self.profile_result = profile_result
         self._env = Environment(
             loader=FileSystemLoader(str(_TEMPLATE_DIR)),
             keep_trailing_newline=True,
@@ -54,10 +57,26 @@ class DbtGenerator:
         """Generate every file and return ``{relative_path: content}``."""
         self._files.clear()
 
+        # Collect all source tables that need models
+        all_source_tables: set[str] = set()
+        for hub in self.spec.hubs:
+            all_source_tables.update(hub.source_tables)
+        for link in self.spec.links:
+            all_source_tables.update(link.source_tables)
+
+        # Pre-stage models (type casting from raw strings)
+        pre_stage_tables: set[str] = set()
+        if self.cfg.generate_pre_stage and self.profile_result:
+            for src in all_source_tables:
+                if self._table_needs_pre_stage(src):
+                    self._generate_pre_stage(src)
+                    pre_stage_tables.add(src)
+
+        # Staging models (automate-dv hashing)
         if self.cfg.generate_staging:
-            for hub in self.spec.hubs:
-                for src in hub.source_tables:
-                    self._generate_staging(src)
+            for src in all_source_tables:
+                has_pre_stage = src in pre_stage_tables
+                self._generate_staging(src, from_pre_stage=has_pre_stage)
 
         for hub in self.spec.hubs:
             self._generate_hub(hub)
@@ -94,15 +113,79 @@ class DbtGenerator:
         return written
 
     # ------------------------------------------------------------------
-    # Staging
+    # Pre-stage (type casting)
     # ------------------------------------------------------------------
 
-    def _generate_staging(self, source_table: str) -> None:
-        hashed_columns = self._staging_hashed_columns(source_table)
-        tpl = self._env.get_template("staging.sql.j2")
+    def _table_needs_pre_stage(self, source_table: str) -> bool:
+        """Check if any string column in this table has an inferred type."""
+        if not self.profile_result:
+            return False
+        tp = next(
+            (t for t in self.profile_result.tables if t.table_name == source_table),
+            None,
+        )
+        if tp is None:
+            return False
+        return any(cp.inferred_type is not None for cp in tp.column_profiles)
+
+    def _generate_pre_stage(self, source_table: str) -> None:
+        """Generate a pre-stage model that casts raw strings to proper types."""
+        assert self.profile_result is not None
+        tp = next(
+            t for t in self.profile_result.tables if t.table_name == source_table
+        )
+
+        columns: list[dict] = []
+        for cp in tp.column_profiles:
+            cast_expr = None
+            if cp.inferred_type is not None:
+                it = cp.inferred_type
+                if it.spark_target_type == "timestamp" and it.format_string:
+                    cast_expr = f"TO_TIMESTAMP(`{cp.column_name}`, '{it.format_string}')"
+                elif it.spark_target_type == "date" and it.format_string:
+                    cast_expr = f"TO_DATE(`{cp.column_name}`, '{it.format_string}')"
+                elif it.spark_target_type == "boolean":
+                    cast_expr = (
+                        f"CASE LOWER(TRIM(`{cp.column_name}`)) "
+                        f"WHEN 'true' THEN TRUE WHEN 'yes' THEN TRUE "
+                        f"WHEN 'y' THEN TRUE WHEN 't' THEN TRUE WHEN '1' THEN TRUE "
+                        f"ELSE FALSE END"
+                    )
+                elif it.spark_target_type in ("bigint", "double"):
+                    cast_expr = f"CAST(`{cp.column_name}` AS {it.spark_target_type.upper()})"
+
+            columns.append({
+                "name": cp.column_name,
+                "cast_expr": cast_expr,
+            })
+
+        tpl = self._env.get_template("pre_stage.sql.j2")
         content = tpl.render(
             source_name=self.cfg.source_name,
             source_table=source_table,
+            columns=columns,
+        )
+        path = f"models/staging/pre_stg_{normalize_name(source_table)}.sql"
+        self._files[path] = content
+
+    # ------------------------------------------------------------------
+    # Staging
+    # ------------------------------------------------------------------
+
+    def _generate_staging(self, source_table: str, from_pre_stage: bool = False) -> None:
+        hashed_columns = self._staging_hashed_columns(source_table)
+
+        # When a pre-stage exists, the staging model reads from it
+        # instead of directly from the raw source
+        if from_pre_stage:
+            staging_source_name = f"pre_stg_{normalize_name(source_table)}"
+        else:
+            staging_source_name = source_table
+
+        tpl = self._env.get_template("staging.sql.j2")
+        content = tpl.render(
+            source_name=self.cfg.source_name,
+            source_table=staging_source_name,
             record_source_column=self.cfg.record_source_column,
             load_date_column=self.cfg.load_date_column,
             effective_from_column=self.cfg.effective_from_column,
