@@ -131,6 +131,12 @@ class ProfileEngine:
 
         row_count = basic[df.schema.fields[0].name]["row_count"] if df.schema.fields else 0
 
+        # Verify uniqueness for potential BK columns using exact count on the
+        # full (unsampled) DataFrame.  Approximate distinct + sampling can
+        # undercount by 2-5%, which causes wrong BK selection downstream.
+        if was_sampled or table_config.approx_distinct:
+            col_profiles = self._verify_bk_uniqueness(df, col_profiles, row_count)
+
         return TableProfile(
             table_name=table_name,
             catalog=catalog,
@@ -140,6 +146,84 @@ class ProfileEngine:
             sampled=was_sampled,
             sample_fraction=sample_frac,
         )
+
+    @staticmethod
+    def _verify_bk_uniqueness(
+        df: DataFrame,
+        col_profiles: list[ColumnProfile],
+        row_count: int,
+    ) -> list[ColumnProfile]:
+        """Re-check uniqueness with exact countDistinct for potential BK columns.
+
+        Columns with approximate uniqueness >= 85% and low null rate are
+        likely BK candidates.  Their uniqueness is re-verified on the full
+        (unsampled) DataFrame to avoid approx_count_distinct errors that
+        cause wrong BK selection.
+        """
+        if row_count == 0:
+            return col_profiles
+
+        # Identify columns worth re-checking
+        cols_to_verify = [
+            cp for cp in col_profiles
+            if cp.uniqueness >= 0.85 and cp.null_rate <= 0.10
+        ]
+        if not cols_to_verify:
+            return col_profiles
+
+        # Single aggregation for all candidate columns
+        from pyspark.sql import functions as _F
+
+        agg_exprs = []
+        for cp in cols_to_verify:
+            c = _F.col(f"`{cp.column_name}`")
+            agg_exprs.append(_F.countDistinct(c).alias(f"{cp.column_name}__exact"))
+            agg_exprs.append(
+                _F.sum(_F.when(c.isNull(), 1).otherwise(0)).alias(f"{cp.column_name}__nulls")
+            )
+
+        row = df.agg(*agg_exprs).collect()[0]
+
+        # Build corrected profiles
+        verified_names: dict[str, tuple[int, int, float, float]] = {}
+        for cp in cols_to_verify:
+            exact_distinct = row[f"{cp.column_name}__exact"] or 0
+            exact_nulls = row[f"{cp.column_name}__nulls"] or 0
+            non_null = row_count - exact_nulls
+            exact_uniqueness = min(exact_distinct / non_null, 1.0) if non_null > 0 else 0.0
+            exact_null_rate = round(exact_nulls / row_count, 6) if row_count else 0.0
+            verified_names[cp.column_name] = (
+                exact_distinct, exact_nulls, exact_uniqueness, exact_null_rate
+            )
+
+        result: list[ColumnProfile] = []
+        for cp in col_profiles:
+            if cp.column_name in verified_names:
+                exact_distinct, exact_nulls, exact_uniqueness, exact_null_rate = (
+                    verified_names[cp.column_name]
+                )
+                cp = ColumnProfile(
+                    table_name=cp.table_name,
+                    column_name=cp.column_name,
+                    spark_type=cp.spark_type,
+                    row_count=cp.row_count,
+                    null_count=exact_nulls,
+                    null_rate=exact_null_rate,
+                    distinct_count=exact_distinct,
+                    uniqueness=round(exact_uniqueness, 6),
+                    min_value=cp.min_value,
+                    max_value=cp.max_value,
+                    mean_length=cp.mean_length,
+                    max_length=cp.max_length,
+                    dominant_pattern=cp.dominant_pattern,
+                    pattern_coverage=cp.pattern_coverage,
+                    top_values=cp.top_values,
+                    is_numeric=cp.is_numeric,
+                    approx_quantiles=cp.approx_quantiles,
+                    inferred_type=cp.inferred_type,
+                )
+            result.append(cp)
+        return result
 
     def profile_tables(
         self,

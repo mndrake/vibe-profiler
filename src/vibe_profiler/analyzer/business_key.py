@@ -33,6 +33,13 @@ class BusinessKeyAnalyzer:
 
         for cp in table_profile.column_profiles:
             reasons: list[str] = []
+
+            # --- Hard disqualifiers ---
+            # A true business key should never have significant nulls.
+            # Columns with >10% nulls are excluded entirely.
+            if cp.null_rate > 0.10:
+                continue
+
             # --- uniqueness score ---
             if cp.uniqueness >= self.cfg.uniqueness_threshold:
                 u_score = 1.0
