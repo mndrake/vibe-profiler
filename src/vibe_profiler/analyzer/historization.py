@@ -28,7 +28,10 @@ class HistorizationAnalyzer:
         df: DataFrame,
         business_key_candidates: tuple[BusinessKeyCandidate, ...],
     ) -> HistorizationInfo:
-        temporal_cols = detect_temporal_columns(df, table_profile.table_name)
+        temporal_cols = detect_temporal_columns(
+            df, table_profile.table_name,
+            column_profiles=table_profile.column_profiles,
+        )
 
         if not temporal_cols:
             return HistorizationInfo(
